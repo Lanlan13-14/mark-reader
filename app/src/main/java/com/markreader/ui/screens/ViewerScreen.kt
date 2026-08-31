@@ -113,7 +113,7 @@ import com.markreader.data.AppThemeModePreference
 import com.markreader.data.ReaderThemePreference
 import com.markreader.file.DocumentType
 import com.markreader.file.OPENABLE_MIME_TYPES
-import com.markreader.tryTakePersistablePermission
+import com.markreader.file.tryTakePersistablePermission
 import com.markreader.ui.components.GroupInnerRadius
 import com.markreader.ui.components.GroupOuterRadius
 import com.markreader.ui.components.SegmentPosition

@@ -93,6 +93,7 @@
     <string name="editor_saved">Saved</string>
     <string name="editor_save_as">Save As</string>
     <string name="editor_cannot_save_directly">Can\'t save directly — save a copy instead?</string>
+    <string name="editor_cannot_save_encoding">This file\'s text encoding isn\'t recognised — save a copy instead?</string>
     <string name="editor_tab_edit">Edit</string>
     <string name="editor_tab_preview">Preview</string>
     <string name="editor_placeholder_markdown">Start writing markdown…</string>

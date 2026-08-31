@@ -17,6 +17,9 @@ import androidx.lifecycle.lifecycleScope
 import com.markreader.data.AppThemeModePreference
 import com.markreader.data.PreferencesRepository
 import com.markreader.data.UserPreferences
+import com.markreader.file.DocumentSource
+import com.markreader.file.ExternalFileCache
+import com.markreader.file.tryTakePersistablePermission
 import com.markreader.ui.MarkReaderApp
 import com.markreader.ui.theme.AppTheme
 import com.markreader.ui.theme.MarkReaderTheme
@@ -98,12 +101,12 @@ class MainActivity : ComponentActivity() {
             // so consumers can await it without a timeout.
             val deferred = ExternalFileCache.register(uriString)
             val job = lifecycleScope.launch(Dispatchers.IO) {
-                val content = try {
-                    contentResolver.openInputStream(data)?.use { readBoundedText(it) }
+                val bytes = try {
+                    contentResolver.openInputStream(data)?.use { DocumentSource.readBounded(it) }
                 } catch (_: Exception) {
                     null
                 }
-                deferred.complete(content)
+                deferred.complete(bytes)
             }
             job.invokeOnCompletion {
                 if (!deferred.isCompleted) deferred.complete(null)
@@ -121,7 +124,7 @@ class MainActivity : ComponentActivity() {
             val file = File(cacheDir, "shared-text.md")
             file.writeText(text)
             val uriString = Uri.fromFile(file).toString()
-            ExternalFileCache.register(uriString).complete(text)
+            ExternalFileCache.register(uriString).complete(text.toByteArray())
             withContext(Dispatchers.Main) {
                 externalUri = uriString
                 externalUriNonce++

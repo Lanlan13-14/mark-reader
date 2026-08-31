@@ -66,7 +66,7 @@ import com.markreader.file.DocumentType
 import com.markreader.file.DocumentTypeResolver
 import com.markreader.file.OPENABLE_MIME_TYPES
 import com.markreader.R
-import com.markreader.tryTakePersistablePermission
+import com.markreader.file.tryTakePersistablePermission
 import com.markreader.data.RecentFile
 import com.markreader.ui.components.SectionHeader
 import com.markreader.ui.components.SegmentPosition
