@@ -126,9 +126,7 @@ fun EditorScreen(
     val saveAsLabel = stringResource(R.string.editor_save_as)
 
     val saveAsLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument(
-            if (uiState.isMarkdown) "text/markdown" else "text/plain"
-        ),
+        contract = ActivityResultContracts.CreateDocument(uiState.creationMimeType),
         onResult = { uri -> if (uri != null) viewModel.onSaveAs(uri) }
     )
 
@@ -222,8 +220,7 @@ fun EditorScreen(
                     }
                 }
                 else -> {
-                    // Tabs for markdown
-                    if (uiState.isMarkdown) {
+                    if (uiState.capabilities.hasEditorPreview) {
                         PrimaryTabRow(selectedTabIndex = if (uiState.activeTab == EditorTab.Edit) 0 else 1) {
                             Tab(
                                 selected = uiState.activeTab == EditorTab.Edit,
@@ -250,20 +247,21 @@ fun EditorScreen(
 
                     // Editor or Preview content
                     val prefs = uiState.userPreferences
-                    val editorFontFamily = if (uiState.isMarkdown) {
+                    val editorFontFamily = if (uiState.capabilities.isMonospaced) {
+                        when (prefs.codeFont) {
+                            CodeFontPreference.JetBrainsMono -> CodeFontFamily
+                            CodeFontPreference.SystemMono -> FontFamily.Monospace
+                        }
+                    } else {
                         when (prefs.readingFont) {
                             ReadingFontPreference.Merriweather -> ReadingFontFamily
                             ReadingFontPreference.SystemSerif -> FontFamily.Serif
                             ReadingFontPreference.MerriweatherSans -> SansReadingFontFamily
                         }
-                    } else {
-                        when (prefs.codeFont) {
-                            CodeFontPreference.JetBrainsMono -> CodeFontFamily
-                            CodeFontPreference.SystemMono -> FontFamily.Monospace
-                        }
                     }
 
-                    val showEdit = !uiState.isMarkdown || uiState.activeTab == EditorTab.Edit
+                    val showEdit = !uiState.capabilities.hasEditorPreview ||
+                        uiState.activeTab == EditorTab.Edit
 
                     if (showEdit) {
                         val scrollState = rememberScrollState()
@@ -293,13 +291,7 @@ fun EditorScreen(
                                     Box {
                                         if (uiState.textFieldValue.text.isEmpty()) {
                                             Text(
-                                                text = stringResource(
-                                                    if (uiState.isMarkdown) {
-                                                        R.string.editor_placeholder_markdown
-                                                    } else {
-                                                        R.string.editor_placeholder_text
-                                                    }
-                                                ),
+                                                text = stringResource(uiState.placeholderRes),
                                                 style = TextStyle(
                                                     fontFamily = editorFontFamily,
                                                     fontSize = prefs.fontSizeSp.sp,
@@ -348,7 +340,7 @@ fun EditorScreen(
                                     lineHeight = prefs.lineHeight,
                                     readingFont = prefs.readingFont,
                                     codeFont = prefs.codeFont,
-                                    isSourceCode = false,
+                                    isMonospaced = false,
                                     textAlignment = prefs.textAlignment,
                                     codeBlockBackgroundColor = if (previewIsDark) 0x19FFFFFF.toInt() else 0x19000000.toInt()
                                 )
@@ -356,8 +348,8 @@ fun EditorScreen(
                         }
                     }
 
-                    // Formatting toolbar — markdown edit mode, visible when keyboard is up
-                    if (uiState.isMarkdown && uiState.activeTab == EditorTab.Edit) {
+                    // Visible when the keyboard is up, for formats with markup to insert.
+                    if (uiState.capabilities.hasFormattingToolbar && uiState.activeTab == EditorTab.Edit) {
                         AnimatedVisibility(visible = keyboardVisible) {
                             FormattingToolbar(viewModel = viewModel)
                         }

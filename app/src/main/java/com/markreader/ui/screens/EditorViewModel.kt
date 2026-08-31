@@ -1,16 +1,15 @@
 package com.markreader.ui.screens
 
 import android.app.Application
-import android.graphics.Color
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import androidx.core.graphics.ColorUtils
 import com.markreader.R
 import com.markreader.file.DocumentSource
 import com.markreader.file.FileTooLargeException
@@ -24,8 +23,12 @@ import com.markreader.data.RecentFilesRepository
 import com.markreader.data.UserPreferences
 import com.markreader.file.DocumentType
 import com.markreader.file.DocumentTypeResolver
+import com.markreader.format.DocumentFormat
+import com.markreader.format.FormatCapabilities
+import com.markreader.format.FormatRegistry
+import com.markreader.format.ReaderContent
+import com.markreader.format.RenderTheme
 import com.markreader.ui.UiMessage
-import com.markreader.ui.markdown.MarkwonRenderer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +36,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** Default for a format that has nothing more specific to ask the picker for. */
+private const val PLAIN_TEXT_MIME = "text/plain"
 
 enum class EditorTab { Edit, Preview }
 
@@ -52,7 +58,12 @@ data class EditorUiState(
     val isLoading: Boolean = true,
     val fileName: String = "",
     val textFieldValue: TextFieldValue = TextFieldValue(""),
-    val isMarkdown: Boolean = false,
+    /** What the editor may offer, decided by the document's format rather than by its type. */
+    val capabilities: FormatCapabilities = FormatCapabilities(),
+    /** What an empty document of this format invites the user to type. */
+    @StringRes val placeholderRes: Int = R.string.editor_placeholder_text,
+    /** The MIME type Save As asks the system picker for. */
+    val creationMimeType: String = PLAIN_TEXT_MIME,
     val isModified: Boolean = false,
     val isSaving: Boolean = false,
     val saveResult: SaveResult? = null,
@@ -73,7 +84,8 @@ class EditorViewModel(
     private val recentFilesRepository = RecentFilesRepository.getInstance(application)
     private var currentUri: String? = initialUri
     private var systemDarkTheme = false
-    private var renderer: MarkwonRenderer? = null
+    private val formats = FormatRegistry(application)
+    private var format: DocumentFormat? = null
 
     private val _uiState = MutableStateFlow(EditorUiState())
     val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
@@ -84,20 +96,21 @@ class EditorViewModel(
             loadContent()
         } else {
             // No document to resolve a type from, and this app's default is Markdown.
-            _uiState.value = _uiState.value.copy(
-                isLoading = false,
-                fileName = UNTITLED_MARKDOWN,
-                isMarkdown = true,
-                encoding = TextEncoding.Utf8
-            )
+            _uiState.value = _uiState.value
+                .withFormat(formats.formatFor(DocumentType.Markdown))
+                .copy(
+                    isLoading = false,
+                    fileName = UNTITLED_MARKDOWN,
+                    encoding = TextEncoding.Utf8
+                )
         }
     }
 
     fun onSystemDarkThemeChanged(isDark: Boolean) {
         if (systemDarkTheme == isDark) return
         systemDarkTheme = isDark
-        renderer = null
-        if (_uiState.value.isMarkdown && _uiState.value.activeTab == EditorTab.Preview) {
+        formats.invalidateRenderers()
+        if (isPreviewShowing()) {
             viewModelScope.launch { renderPreview(_uiState.value.textFieldValue.text) }
         }
     }
@@ -126,10 +139,9 @@ class EditorViewModel(
             } catch (e: Exception) {
                 null
             }
-            _uiState.value = _uiState.value.copy(
+            _uiState.value = _uiState.value.withFormatFor(fileName).copy(
                 isLoading = false,
                 fileName = fileName,
-                isMarkdown = DocumentTypeResolver.resolveFromHints(fileName) == DocumentType.Markdown,
                 textFieldValue = TextFieldValue(decoded?.text ?: ""),
                 encoding = decoded?.encoding,
                 errorMessage = when {
@@ -143,14 +155,14 @@ class EditorViewModel(
 
     fun onTextChanged(value: TextFieldValue) {
         _uiState.value = _uiState.value.copy(textFieldValue = value, isModified = true)
-        if (_uiState.value.isMarkdown && _uiState.value.activeTab == EditorTab.Preview) {
+        if (isPreviewShowing()) {
             viewModelScope.launch { renderPreview(value.text) }
         }
     }
 
     fun onTabChanged(tab: EditorTab) {
         _uiState.value = _uiState.value.copy(activeTab = tab)
-        if (tab == EditorTab.Preview && _uiState.value.isMarkdown) {
+        if (tab == EditorTab.Preview && _uiState.value.capabilities.hasEditorPreview) {
             viewModelScope.launch { renderPreview(_uiState.value.textFieldValue.text) }
         }
     }
@@ -265,11 +277,9 @@ class EditorViewModel(
                 val newFileName = resolveFileName(newUri) ?: newUri.lastPathSegment ?: _uiState.value.fileName
                 recentFilesRepository.recordOpen(newUri.toString(), newFileName)
                 currentUri = newUri.toString()
-                _uiState.value = _uiState.value.copy(
+                _uiState.value = _uiState.value.withFormatFor(newFileName).copy(
                     isSaving = false, isModified = false,
                     fileName = newFileName, saveResult = SaveResult.Success,
-                    isMarkdown = DocumentTypeResolver.resolveFromHints(newFileName) ==
-                        DocumentType.Markdown,
                     // The copy is written in a known encoding, so this one can be saved to.
                     encoding = encoding
                 )
@@ -285,27 +295,45 @@ class EditorViewModel(
         _uiState.value = _uiState.value.copy(saveResult = null)
     }
 
+    private fun isPreviewShowing(): Boolean =
+        _uiState.value.capabilities.hasEditorPreview &&
+            _uiState.value.activeTab == EditorTab.Preview
+
     private suspend fun renderPreview(text: String) {
-        val prefs = _uiState.value.userPreferences
-        val isDark = when (prefs.appThemeMode) {
+        val isDark = when (_uiState.value.userPreferences.appThemeMode) {
             AppThemeModePreference.Dark -> true
             AppThemeModePreference.Light -> false
             AppThemeModePreference.System -> systemDarkTheme
         }
-        if (renderer == null) {
-            val bg = ColorUtils.setAlphaComponent(if (isDark) Color.WHITE else Color.BLACK, 25)
-            renderer = MarkwonRenderer(getApplication(), isDark, bg)
-        }
-        val spanned = withContext(Dispatchers.Default) {
-            try {
-                renderer!!.render(text)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
-            }
-        }
-        _uiState.value = _uiState.value.copy(previewText = spanned)
+        // The format owns the renderer and its per-theme cache, so the preview and the viewer
+        // now render through one Markwon configuration rather than two built separately.
+        val content = format?.load(text, RenderTheme(isDark))
+        _uiState.value = _uiState.value.copy(
+            previewText = (content as? ReaderContent.Spans)?.spanned
+        )
+    }
+
+    /** As [withFormat], for the format a document named [fileName] resolves to. */
+    private fun EditorUiState.withFormatFor(fileName: String): EditorUiState =
+        withFormat(formats.formatFor(DocumentTypeResolver.resolveFromHints(fileName)))
+
+    /**
+     * The state that follows from [next] — and **adopts it as the current format**, which the
+     * preview renders through. The side effect is why the two travel together: a state that said
+     * "Markdown" while [format] still held the previous document's would show a preview tab that
+     * rendered the wrong thing.
+     *
+     * Null cannot arrive from a name alone, since `resolveFromHints` never answers
+     * [DocumentType.Binary]. The editor is honest about it rather than asserting, and plain text
+     * is the right floor if it ever does.
+     */
+    private fun EditorUiState.withFormat(next: DocumentFormat?): EditorUiState {
+        format = next
+        return copy(
+            capabilities = next?.capabilities ?: FormatCapabilities(),
+            placeholderRes = next?.editorPlaceholderRes ?: R.string.editor_placeholder_text,
+            creationMimeType = next?.creationMimeType ?: PLAIN_TEXT_MIME
+        )
     }
 
     private suspend fun resolveFileName(uri: Uri): String? = withContext(Dispatchers.IO) {

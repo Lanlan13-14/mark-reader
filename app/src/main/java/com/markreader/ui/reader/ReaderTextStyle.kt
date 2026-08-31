@@ -17,10 +17,10 @@ import com.markreader.data.TextAlignmentPreference
 
 internal fun resolveTypeface(
     context: Context,
-    isSourceCode: Boolean,
+    isMonospaced: Boolean,
     readingFont: ReadingFontPreference,
     codeFont: CodeFontPreference
-): Typeface = if (isSourceCode) {
+): Typeface = if (isMonospaced) {
     when (codeFont) {
         CodeFontPreference.JetBrainsMono -> try {
             ResourcesCompat.getFont(
@@ -52,7 +52,7 @@ internal fun createStyledTextView(
     lineHeight: Float,
     readingFont: ReadingFontPreference,
     codeFont: CodeFontPreference,
-    isSourceCode: Boolean,
+    isMonospaced: Boolean,
     textAlignment: TextAlignmentPreference,
     textColor: Int,
     selectionHighlightColor: Int,
@@ -67,7 +67,7 @@ internal fun createStyledTextView(
         setTextIsSelectable(true)
         setTextColor(textColor)
         highlightColor = selectionHighlightColor
-        typeface = resolveTypeface(context, isSourceCode, readingFont, codeFont)
+        typeface = resolveTypeface(context, isMonospaced, readingFont, codeFont)
         // Derive paragraph direction from the text, not from the app locale.
         // TEXT_ALIGNMENT_VIEW_START below resolves against the *view's* layout
         // direction, which follows the locale — so an Arabic or Hebrew document opened
@@ -94,7 +94,7 @@ internal fun applyStyleToTextView(
     lineHeight: Float,
     readingFont: ReadingFontPreference,
     codeFont: CodeFontPreference,
-    isSourceCode: Boolean,
+    isMonospaced: Boolean,
     textAlignment: TextAlignmentPreference,
     textColor: Int,
     selectionHighlightColor: Int
@@ -103,7 +103,7 @@ internal fun applyStyleToTextView(
     tv.setLineSpacing(0f, lineHeight)
     tv.setTextColor(textColor)
     tv.highlightColor = selectionHighlightColor
-    tv.typeface = resolveTypeface(tv.context, isSourceCode, readingFont, codeFont)
+    tv.typeface = resolveTypeface(tv.context, isMonospaced, readingFont, codeFont)
     // See createStyledTextView: content-derived direction, set outside the
     // justification branch because it applies either way.
     tv.textDirection = TextView.TEXT_DIRECTION_FIRST_STRONG

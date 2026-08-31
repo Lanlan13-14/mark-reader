@@ -1,4 +1,4 @@
-package com.markreader.ui.markdown
+package com.markreader.format.markdown
 
 import android.graphics.Canvas
 import android.graphics.Paint

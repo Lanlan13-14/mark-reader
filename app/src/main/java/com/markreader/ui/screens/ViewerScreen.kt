@@ -111,7 +111,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.markreader.R
 import com.markreader.data.AppThemeModePreference
 import com.markreader.data.ReaderThemePreference
-import com.markreader.file.DocumentType
 import com.markreader.file.OPENABLE_MIME_TYPES
 import com.markreader.file.tryTakePersistablePermission
 import com.markreader.ui.components.GroupInnerRadius
@@ -119,6 +118,7 @@ import com.markreader.ui.components.GroupOuterRadius
 import com.markreader.ui.components.SegmentPosition
 import com.markreader.ui.components.segmentPositionFor
 import com.markreader.ui.components.segmentShape
+import com.markreader.format.HeadingItem
 import com.markreader.ui.export.ExportManager
 import com.markreader.ui.resolve
 import com.markreader.ui.reader.RenderedTextView
@@ -243,14 +243,16 @@ fun ViewerScreen(
     } else {
         stringResource(R.string.untitled)
     }
+    // Naming a view mode is only truthful where there is more than one. Where there is not,
+    // the chip names the format instead — see FormatCapabilities.hasRawView.
     val viewModeLabel = stringResource(
         when {
-            uiState.documentType is DocumentType.SourceCode -> R.string.viewer_subtitle_source_code
+            !uiState.capabilities.hasRawView -> uiState.formatNameRes
             uiState.viewMode == ViewMode.Raw -> R.string.viewer_subtitle_raw_mode
             else -> R.string.viewer_subtitle_rendered_mode
         }
     )
-    val canToggleViewMode = uiState.documentType == DocumentType.Markdown && uiState.rendered != null
+    val canToggleViewMode = uiState.capabilities.hasRawView && uiState.rendered != null
 
     val dynamicLightScheme = remember(context, prefs.useDynamicColors) {
         if (prefs.useDynamicColors && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -447,7 +449,7 @@ fun ViewerScreen(
                                     }
                                 },
                                 navigationIcon = {
-                                    if (uiState.documentType == DocumentType.Markdown) {
+                                    if (uiState.capabilities.hasHeadings) {
                                         FilledTonalIconButton(
                                             onClick = {
                                                 haptics.performHapticFeedback(HapticFeedbackType.Confirm)
@@ -790,7 +792,7 @@ fun ViewerScreen(
                             lineHeight = prefs.lineHeight,
                             readingFont = prefs.readingFont,
                             codeFont = prefs.codeFont,
-                            isSourceCode = uiState.documentType is DocumentType.SourceCode,
+                            isMonospaced = uiState.capabilities.isMonospaced,
                             textAlignment = prefs.textAlignment,
                             codeBlockBackgroundColor = if (isSurfaceDark) {
                                 0x19FFFFFF.toInt()
