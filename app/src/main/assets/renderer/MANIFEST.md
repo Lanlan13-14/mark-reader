@@ -78,5 +78,12 @@ Four things the desktop build emits are deliberately **not** copied:
 The renderer is GPL-3.0-only, as is this app. It carries MIT-licensed code ported from VS Code
 (`css/markdown.css`, `css/highlight.css`, parts of `util.js` and `engine.js`) and vendored
 builds of `markdown-it`, `@vscode/markdown-it-katex`, KaTeX, `highlight.js`, `mermaid`, `yaml`
-and `DOMPurify`. The notices live with the source, in the desktop repo's
-`src/renderer/licenses/`.
+and `DOMPurify`.
+
+**The notices are in this repo, at `licenses/THIRD_PARTY_LICENSES.md`.** They have to be: the
+APK ships these files, and MIT, BSD-3-Clause and ISC each require the notice to travel with
+the copy.
+
+The `vendor/` bundles are minified with their licence banners stripped, so nothing in this
+directory declares its own provenance — **a re-vendor that adds or upgrades a dependency has
+to update that file by hand**, because nothing here will show the change.
