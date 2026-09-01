@@ -13,7 +13,8 @@ import com.markreader.format.RenderTheme
  * formats are measured against: a `.txt` gets no table of contents, no view-mode toggle, no
  * preview pane and no formatting toolbar, because none of those mean anything without markup.
  *
- * It also stands in for CSV until P5. A `.csv` read as plain text is at least honest about what
+ * It also stands in for CSV until that gets a format. A `.csv` read as plain text is at least
+ * honest about what
  * it is showing, which is more than Markdown prose was.
  */
 object PlainTextFormat : DocumentFormat {

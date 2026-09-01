@@ -52,7 +52,17 @@ class MarkdownFormat(private val newRenderer: (isDark: Boolean) -> MarkwonRender
 
     override val renderFailureWarningRes = R.string.viewer_warning_markdown
 
-    override suspend fun load(text: String, theme: RenderTheme): ReaderContent? = try {
+    /**
+     * The source, unchanged, for the shared renderer to draw.
+     *
+     * Nothing is parsed here and nothing can fail — which is why [renderFailureWarningRes] is
+     * now only reachable through [loadEditorPreview]. Markdown's renderer moved into the page.
+     */
+    override suspend fun load(text: String, theme: RenderTheme): ReaderContent =
+        ReaderContent.Markdown(text)
+
+    /** Markwon, until the editor preview moves onto the same renderer as the viewer. */
+    override suspend fun loadEditorPreview(text: String, theme: RenderTheme): ReaderContent? = try {
         ReaderContent.Spans(renderer(theme.isDark).render(text))
     } catch (ex: CancellationException) {
         throw ex
@@ -62,8 +72,18 @@ class MarkdownFormat(private val newRenderer: (isDark: Boolean) -> MarkwonRender
         null
     }
 
+    /**
+     * Offsets index the rendering, so a rendering this side cannot see has no offsets to give.
+     *
+     * The WebView knows where its headings are and Kotlin does not; a list built from source
+     * offsets would scroll the reader to the wrong place, or to nowhere. Better an absent table
+     * of contents than one that lies — **rebuilding it in the page is planned**, with search.
+     */
     override fun headings(text: String, content: ReaderContent): List<HeadingItem> =
-        parseHeadings(text, (content as? ReaderContent.Spans)?.text?.toString())
+        when (content) {
+            is ReaderContent.Spans -> parseHeadings(text, content.text.toString())
+            is ReaderContent.Markdown, is ReaderContent.Table -> emptyList()
+        }
 
     override fun invalidateRenderers() = renderers.clear()
 

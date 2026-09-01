@@ -547,8 +547,8 @@ class ViewerViewModel(
         // Search is span-based: it counts matches in a string and paints them with spans. That
         // is a requirement of this implementation, not of the reader, so the narrowing lives
         // here rather than at the format boundary — a rendered document that is not text has
-        // no offsets to walk and gets no matches. P6a hands the rendered view's search to the
-        // WebView's own find-in-page and this path keeps raw mode.
+        // no offsets to walk and gets no matches. The rendered view's search is planned to move
+        // to the WebView's own find-in-page, leaving this path to raw mode.
         val renderedSpans = (baseRendered as? ReaderContent.Spans)?.text
         val baseText = when (activeViewMode) {
             ViewMode.Raw -> currentState.rawText

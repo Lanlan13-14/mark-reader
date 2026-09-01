@@ -308,7 +308,9 @@ class EditorViewModel(
         // The format owns the renderer and its per-theme cache, so the preview and the viewer
         // now render through one Markwon configuration rather than two built separately.
         _uiState.value = _uiState.value.copy(
-            previewText = format?.load(text, RenderTheme(isDark))
+            // Not `load`: the viewer's Markdown path answers with source for the WebView, and
+            // this pane is still a Markwon TextView.
+            previewText = format?.loadEditorPreview(text, RenderTheme(isDark))
         )
     }
 

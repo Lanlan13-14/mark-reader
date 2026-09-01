@@ -13,23 +13,25 @@ import org.junit.Test
  * Offsets index the *rendered* text, since that is what the reader scrolls. Markwon eats the
  * `#` markers, so a source offset would be wrong by the accumulated width of every marker above
  * it — which is why this mapping exists at all.
+ *
+ * All of which applies to the surfaces the app renders itself. A document drawn by the shared
+ * renderer has its rendering inside the page, and gets no headings from here at all.
  */
 class MarkdownHeadingsTest {
 
     private val format = MarkdownFormat { error("no renderer is needed for these assertions") }
 
-    private fun headings(markdown: String, rendered: String?): List<HeadingItem> = format.headings(
-        markdown,
-        if (rendered == null) {
-            ReaderContent.Table(emptyList())
-        } else {
-            ReaderContent.Spans(FakeSpanned(rendered))
-        }
-    )
+    /**
+     * Defaults the rendering to the source, for the cases that are about *which* lines are
+     * headings rather than where they land. Only [ReaderContent.Spans] carries offsets at all,
+     * so there is nothing else these could be passed.
+     */
+    private fun headings(markdown: String, rendered: String = markdown): List<HeadingItem> =
+        format.headings(markdown, ReaderContent.Spans(FakeSpanned(rendered)))
 
     @Test
     fun `levels one to three are navigation, deeper ones are not`() {
-        val result = headings("# One\n## Two\n### Three\n#### Four\n##### Five", null)
+        val result = headings("# One\n## Two\n### Three\n#### Four\n##### Five")
 
         assertEquals(listOf("One", "Two", "Three"), result.map { it.text })
         assertEquals(listOf(1, 2, 3), result.map { it.level })
@@ -37,17 +39,17 @@ class MarkdownHeadingsTest {
 
     @Test
     fun `a heading with no text is not a heading`() {
-        assertEquals(emptyList<HeadingItem>(), headings("#\n##   \nbody", null))
+        assertEquals(emptyList<HeadingItem>(), headings("#\n##   \nbody"))
     }
 
     @Test
     fun `leading whitespace does not hide a heading`() {
-        assertEquals(listOf("Indented"), headings("   ## Indented", null).map { it.text })
+        assertEquals(listOf("Indented"), headings("   ## Indented").map { it.text })
     }
 
     @Test
     fun `a hash inside a line is not a heading`() {
-        assertEquals(emptyList<HeadingItem>(), headings("see issue #42 for detail", null))
+        assertEquals(emptyList<HeadingItem>(), headings("see issue #42 for detail"))
     }
 
     @Test
@@ -78,10 +80,18 @@ class MarkdownHeadingsTest {
         assertEquals(listOf(0, 5), result.map { it.offset })
     }
 
+    /**
+     * The WebView path. Offsets index a rendering that lives in the page, so this side has none
+     * to give — and a table of contents built from source offsets would scroll to the wrong
+     * place. Absent beats wrong; rebuilding it where the rendering actually is, is planned.
+     */
     @Test
-    fun `with no rendering to map onto, offsets stay in the source`() {
-        val result = headings("# One\nbody\n## Two\n", null)
+    fun `a document rendered in the page has no headings to offer out here`() {
+        val source = "# One\nbody\n## Two\n"
 
-        assertEquals(listOf(0, 11), result.map { it.offset })
+        assertEquals(
+            emptyList<HeadingItem>(),
+            format.headings(source, ReaderContent.Markdown(source))
+        )
     }
 }

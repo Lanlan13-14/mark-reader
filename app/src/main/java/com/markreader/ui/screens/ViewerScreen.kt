@@ -123,6 +123,8 @@ import com.markreader.format.ReaderContent
 import com.markreader.ui.export.ExportManager
 import com.markreader.ui.resolve
 import com.markreader.ui.reader.RenderedTextView
+import com.markreader.ui.reader.WebViewReader
+import com.markreader.webview.rendererSettingsFor
 import kotlin.math.roundToInt
 
 /**
@@ -340,6 +342,24 @@ fun ViewerScreen(
     val canEdit = !uiState.isLoading && uiState.errorMessage == null &&
         uriString != null
 
+    // What the reader will draw, decided here rather than in the body because the chrome has to
+    // see it too: search and the table of contents index text *this* side holds, and a document
+    // drawn by the shared renderer keeps its rendering in the page.
+    //
+    // The fallback wraps the raw String rather than rendering it: no format produced anything,
+    // so there is nothing to draw but the characters.
+    val readerContent = if (uiState.viewMode == ViewMode.Raw) {
+        uiState.rawHighlighted ?: ReaderContent.Spans(uiState.rawText)
+    } else {
+        uiState.rendered ?: ReaderContent.Spans(uiState.rawText)
+    }
+    // Both features exist today and neither survived the swap to the WebView — rebuilding them
+    // in the page, where the rendering is, is planned. Until then the controls are hidden rather than left
+    // to report nothing: raw mode still searches, and a table of contents built from source
+    // offsets would scroll to the wrong place. Deleting this `&&` is most of what re-enables
+    // them.
+    val isContentIndexable = readerContent is ReaderContent.Spans
+
     Scaffold(
         // Matches the reading surface. The content now runs full height under the
         // chrome so there is no strip to disguise, but this still keeps the Scaffold
@@ -450,7 +470,7 @@ fun ViewerScreen(
                                     }
                                 },
                                 navigationIcon = {
-                                    if (uiState.capabilities.hasHeadings) {
+                                    if (uiState.capabilities.hasHeadings && isContentIndexable) {
                                         FilledTonalIconButton(
                                             onClick = {
                                                 haptics.performHapticFeedback(HapticFeedbackType.Confirm)
@@ -469,22 +489,24 @@ fun ViewerScreen(
                                     }
                                 },
                                 actions = {
-                                    FilledTonalIconButton(
-                                        onClick = {
-                                            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-                                            viewModel.onSearchToggled()
-                                        },
-                                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                            containerColor = chromeColors.tonalContainer,
-                                            contentColor = chromeColors.content
-                                        )
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Search,
-                                            contentDescription = stringResource(R.string.viewer_search)
-                                        )
+                                    if (isContentIndexable) {
+                                        FilledTonalIconButton(
+                                            onClick = {
+                                                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                                                viewModel.onSearchToggled()
+                                            },
+                                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                                containerColor = chromeColors.tonalContainer,
+                                                contentColor = chromeColors.content
+                                            )
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Search,
+                                                contentDescription = stringResource(R.string.viewer_search)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
                                     }
-                                    Spacer(modifier = Modifier.width(8.dp))
                                     FilledTonalIconButton(
                                         onClick = {
                                             haptics.performHapticFeedback(HapticFeedbackType.Confirm)
@@ -761,13 +783,7 @@ fun ViewerScreen(
                     }
                 }
                 else -> {
-                    // The fallback wraps the raw String rather than rendering it: no format
-                    // produced anything, so there is nothing to draw but the characters.
-                    val content = if (uiState.viewMode == ViewMode.Raw) {
-                        uiState.rawHighlighted ?: ReaderContent.Spans(uiState.rawText)
-                    } else {
-                        uiState.rendered ?: ReaderContent.Spans(uiState.rawText)
-                    }
+                    val content = readerContent
                     // A warning banner sits above the reader and outside its scroll
                     // container, so it takes the inset itself and the reader starts below
                     // it. Rare enough that losing the overlay in that case is fine.
@@ -777,32 +793,54 @@ fun ViewerScreen(
                         warningMessage = warningMessage,
                         topInset = if (hasWarning) chromeTopInset else 0.dp
                     ) {
-                        RenderedTextView(
-                            content = content,
-                            textColor = contentColor.toArgb(),
-                            padding = PaddingValues(0.dp),
-                            contentTopInset = if (hasWarning) 0.dp else chromeTopInset,
-                            savedScrollY = savedScrollY,
-                            scrollToOffset = scrollToOffset,
-                            onScrollChanged = viewModel::onScrollPositionChanged,
-                            onScrollExtentChanged = viewModel::onScrollExtentChanged,
-                            onScrollConsumed = viewModel::onScrollConsumed,
-                            headings = uiState.headings,
-                            onActiveHeadingChanged = viewModel::onActiveHeadingChanged,
-                            isCodeBlockWrapEnabled = isCodeBlockWrapEnabled,
-                            selectionHighlightColor = selectionHighlightColor,
-                            fontSizeSp = prefs.fontSizeSp,
-                            lineHeight = prefs.lineHeight,
-                            readingFont = prefs.readingFont,
-                            codeFont = prefs.codeFont,
-                            isMonospaced = uiState.capabilities.isMonospaced,
-                            textAlignment = prefs.textAlignment,
-                            codeBlockBackgroundColor = if (isSurfaceDark) {
-                                0x19FFFFFF.toInt()
-                            } else {
-                                0x19000000.toInt()
-                            }
-                        )
+                        // The reader is two surfaces now, and this is where a document picks
+                        // one. Markdown goes to the shared renderer in a WebView; everything
+                        // else is text the app styled itself: raw mode and, for now, plain
+                        // text. `ReaderContent` being closed is what makes this a decision the
+                        // compiler checks rather than a chain of guesses.
+                        when (content) {
+                            is ReaderContent.Markdown -> WebViewReader(
+                                source = content.source,
+                                documentUri = uriString.orEmpty(),
+                                fileName = uiState.fileName,
+                                settings = rendererSettingsFor(
+                                    preferences = prefs,
+                                    isDark = isSurfaceDark,
+                                    isCodeBlockWrapEnabled = isCodeBlockWrapEnabled
+                                ),
+                                padding = PaddingValues(0.dp),
+                                contentTopInset = if (hasWarning) 0.dp else chromeTopInset,
+                                savedScrollY = savedScrollY,
+                                onScroll = viewModel::onScrollPositionChanged
+                            )
+                            is ReaderContent.Spans,
+                            is ReaderContent.Table -> RenderedTextView(
+                                content = content,
+                                textColor = contentColor.toArgb(),
+                                padding = PaddingValues(0.dp),
+                                contentTopInset = if (hasWarning) 0.dp else chromeTopInset,
+                                savedScrollY = savedScrollY,
+                                scrollToOffset = scrollToOffset,
+                                onScrollChanged = viewModel::onScrollPositionChanged,
+                                onScrollExtentChanged = viewModel::onScrollExtentChanged,
+                                onScrollConsumed = viewModel::onScrollConsumed,
+                                headings = uiState.headings,
+                                onActiveHeadingChanged = viewModel::onActiveHeadingChanged,
+                                isCodeBlockWrapEnabled = isCodeBlockWrapEnabled,
+                                selectionHighlightColor = selectionHighlightColor,
+                                fontSizeSp = prefs.fontSizeSp,
+                                lineHeight = prefs.lineHeight,
+                                readingFont = prefs.readingFont,
+                                codeFont = prefs.codeFont,
+                                isMonospaced = uiState.capabilities.isMonospaced,
+                                textAlignment = prefs.textAlignment,
+                                codeBlockBackgroundColor = if (isSurfaceDark) {
+                                    0x19FFFFFF.toInt()
+                                } else {
+                                    0x19000000.toInt()
+                                }
+                            )
+                        }
                     }
                 }
             }

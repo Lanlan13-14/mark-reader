@@ -115,13 +115,15 @@ fun RenderedTextView(
     textAlignment: TextAlignmentPreference,
     codeBlockBackgroundColor: Int
 ) {
-    // The reader surface draws text and nothing else. The other two shapes have no producer
-    // yet — P6a hosts a WebView for [ReaderContent.Html], P5 draws [ReaderContent.Table]
-    // natively — and this `when` is exhaustive, so neither can start producing one without
-    // deciding here what the surface does with it.
+    // This view draws text and nothing else. Callers route the other two elsewhere —
+    // [ReaderContent.Markdown] to [WebViewReader], and [ReaderContent.Table] to a native table
+    // once one is written — so neither arm should be reachable. They are spelled out rather than
+    // hidden behind an `else` so that a fourth shape still cannot be added without deciding what
+    // happens here, and they draw nothing rather than throwing: a mis-routed document is a blank
+    // reader, not a crashed one.
     val text: CharSequence = when (content) {
         is ReaderContent.Spans -> content.text
-        is ReaderContent.Html, is ReaderContent.Table -> ""
+        is ReaderContent.Markdown, is ReaderContent.Table -> ""
     }
     val contentKey = remember(text, fontSizeSp, lineHeight, readingFont, codeFont, isMonospaced, textAlignment) {
         ContentKey(

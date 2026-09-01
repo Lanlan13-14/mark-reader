@@ -76,7 +76,7 @@ import org.json.JSONObject
  * The page starts loading on construction, so it is warming while the document is still being
  * read. [destroy] must be called when the owner goes away; the WebView outlives its Activity
  * otherwise. Placing it in Compose chrome, and the scroll behaviour that goes with it, is
- * deliberately not here — see P6 in `docs/plan/README.md`.
+ * deliberately not here.
  */
 class WebViewDocumentHost(
     private val context: Context,
@@ -169,6 +169,53 @@ class WebViewDocumentHost(
                     .put("rootPath", rootPath ?: JSONObject.NULL)
                     .put("preserveScroll", preserveScroll),
             )
+        }
+    }
+
+    /**
+     * Renders [text] as the document at [virtualPath], without reading anything.
+     *
+     * The counterpart to [openDocument], for the caller that already has the text — which the
+     * reader does: it read and decoded the bytes itself, because the encoding, the recents entry
+     * and the resume position all hang off that read. Going through [openDocument] would decode
+     * the same file a second time, up to `MAX_FILE_BYTES` of it, and leave two copies of the
+     * document that could disagree.
+     *
+     * [virtualPath] still has to name something adopted, because that is what the document's own
+     * relative images resolve against.
+     */
+    fun showDocument(
+        virtualPath: String,
+        text: String,
+        rootPath: String? = null,
+        preserveScroll: Boolean = false,
+    ) {
+        scope.launch(Dispatchers.Main) {
+            pageReady.await()
+            call(
+                "showDocument",
+                JSONObject()
+                    .put("path", virtualPath)
+                    .put("text", text)
+                    .put("rootPath", rootPath ?: JSONObject.NULL)
+                    .put("preserveScroll", preserveScroll),
+            )
+        }
+    }
+
+    /**
+     * Room to leave at the top of the document for chrome drawn over the WebView, in CSS pixels
+     * (which are dp here, since the host disables zoom).
+     *
+     * Deliberately *not* an inset applied to the WebView from outside. The chrome collapses as
+     * the reader scrolls, and an outer inset would leave a dead band where it used to be; page
+     * padding scrolls away with the content, which is what the native reader gets by putting the
+     * same inset inside its `ScrollView`.
+     */
+    fun applyContentInset(topDp: Float) {
+        scope.launch(Dispatchers.Main) {
+            pageReady.await()
+            call("setContentInset", JSONObject().put("top", topDp))
         }
     }
 
