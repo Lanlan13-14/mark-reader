@@ -12,8 +12,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
@@ -51,6 +53,11 @@ fun WebViewReader(
     padding: PaddingValues,
     savedScrollY: State<Int>,
     onScroll: (scrollY: Int, maxScrollY: Int) -> Unit,
+    /**
+     * This WebView cannot run the renderer, so the caller should draw the document some other
+     * way. Carries the WebView version when known.
+     */
+    onRendererUnavailable: (webViewVersion: String?) -> Unit,
     modifier: Modifier = Modifier,
     /**
      * Chrome drawn over the reader. Pushed into the page as document padding rather than applied
@@ -67,7 +74,15 @@ fun WebViewReader(
     // length: this is written from a WebView callback and read from another, and a snapshot write
     // from either would invalidate the composition on every document that renders.
     val restore = remember { ScrollRestore() }
-    val host = remember { WebViewDocumentHost(context, scope, onDocumentRendered = { restore.run() }) }
+    val unavailable by rememberUpdatedState(onRendererUnavailable)
+    val host = remember {
+        WebViewDocumentHost(
+            context,
+            scope,
+            onDocumentRendered = { restore.run() },
+            onRendererUnavailable = { unavailable(it) },
+        )
+    }
     restore.webView = host.webView
     restore.target = { savedScrollY.value }
 

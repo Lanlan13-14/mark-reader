@@ -246,16 +246,25 @@ fun ViewerScreen(
     } else {
         stringResource(R.string.untitled)
     }
-    // Naming a view mode is only truthful where there is more than one. Where there is not,
-    // the chip names the format instead — see FormatCapabilities.hasRawView.
+    // Set once the WebView reports it cannot run the renderer. Held for the session rather than
+    // per document: a WebView too old for the renderer will not become new enough for the next
+    // one, and retrying would cost every document a ten-second wait before falling back.
+    var rendererUnavailable by rememberSaveable { mutableStateOf(false) }
+    var rendererWebViewVersion by rememberSaveable { mutableStateOf<String?>(null) }
+
     val viewModeLabel = stringResource(
-        when {
-            !uiState.capabilities.hasRawView -> uiState.formatNameRes
-            uiState.viewMode == ViewMode.Raw -> R.string.viewer_subtitle_raw_mode
-            else -> R.string.viewer_subtitle_rendered_mode
-        }
+        viewModeLabelFor(
+            hasRawView = uiState.capabilities.hasRawView,
+            isRawMode = uiState.viewMode == ViewMode.Raw,
+            formatNameRes = uiState.formatNameRes,
+            rendererUnavailable = rendererUnavailable
+        )
     )
-    val canToggleViewMode = uiState.capabilities.hasRawView && uiState.rendered != null
+    val canToggleViewMode = canToggleViewMode(
+        hasRawView = uiState.capabilities.hasRawView,
+        hasRendered = uiState.rendered != null,
+        rendererUnavailable = rendererUnavailable
+    )
 
     val dynamicLightScheme = remember(context, prefs.useDynamicColors) {
         if (prefs.useDynamicColors && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -348,11 +357,13 @@ fun ViewerScreen(
     //
     // The fallback wraps the raw String rather than rendering it: no format produced anything,
     // so there is nothing to draw but the characters.
-    val readerContent = if (uiState.viewMode == ViewMode.Raw) {
-        uiState.rawHighlighted ?: ReaderContent.Spans(uiState.rawText)
-    } else {
-        uiState.rendered ?: ReaderContent.Spans(uiState.rawText)
-    }
+    val readerContent = readerContentFor(
+        isRawMode = uiState.viewMode == ViewMode.Raw,
+        rawText = uiState.rawText,
+        rawHighlighted = uiState.rawHighlighted,
+        rendered = uiState.rendered,
+        rendererUnavailable = rendererUnavailable
+    )
     // Both features exist today and neither survived the swap to the WebView — rebuilding them
     // in the page, where the rendering is, is planned. Until then the controls are hidden rather than left
     // to report nothing: raw mode still searches, and a table of contents built from source
@@ -787,7 +798,14 @@ fun ViewerScreen(
                     // A warning banner sits above the reader and outside its scroll
                     // container, so it takes the inset itself and the reader starts below
                     // it. Rare enough that losing the overlay in that case is fine.
-                    val warningMessage = uiState.warningMessage?.resolve()
+                    val warningMessage = when {
+                        !rendererUnavailable -> uiState.warningMessage?.resolve()
+                        rendererWebViewVersion != null -> stringResource(
+                            R.string.viewer_warning_webview_unavailable_version,
+                            rendererWebViewVersion.orEmpty()
+                        )
+                        else -> stringResource(R.string.viewer_warning_webview_unavailable)
+                    }
                     val hasWarning = !warningMessage.isNullOrBlank()
                     ContentContainer(
                         warningMessage = warningMessage,
@@ -811,7 +829,11 @@ fun ViewerScreen(
                                 padding = PaddingValues(0.dp),
                                 contentTopInset = if (hasWarning) 0.dp else chromeTopInset,
                                 savedScrollY = savedScrollY,
-                                onScroll = viewModel::onScrollPositionChanged
+                                onScroll = viewModel::onScrollPositionChanged,
+                                onRendererUnavailable = { version ->
+                                    rendererWebViewVersion = version
+                                    rendererUnavailable = true
+                                }
                             )
                             is ReaderContent.Spans,
                             is ReaderContent.Table -> RenderedTextView(

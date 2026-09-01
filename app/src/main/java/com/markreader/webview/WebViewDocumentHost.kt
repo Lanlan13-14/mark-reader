@@ -17,11 +17,13 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.annotation.RequiresApi
 import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewCompat
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
 /**
@@ -85,6 +87,11 @@ class WebViewDocumentHost(
     private val onDocumentRendered: (virtualPath: String) -> Unit = {},
     /** A document could not be read. [cause] is null when the path resolved to nothing. */
     private val onDocumentFailed: (virtualPath: String, cause: Throwable?) -> Unit = { _, _ -> },
+    /**
+     * The page never reported ready, so this WebView cannot run the renderer at all. Carries the
+     * WebView's version name when it is known, for a message worth reading.
+     */
+    private val onRendererUnavailable: (webViewVersion: String?) -> Unit = {},
 ) {
 
     private val space = SafPathSpace(context.contentResolver)
@@ -112,6 +119,28 @@ class WebViewDocumentHost(
 
     init {
         webView.loadUrl(PAGE_URL)
+
+        // Watch for a renderer that never starts.
+        //
+        // Behavioural, deliberately, rather than a version comparison. `ready()` fires only after
+        // the whole vendored module graph has resolved and executed, so its absence is the one
+        // signal covering every cause at once — a WebView too old for the syntax the renderer is
+        // written in, an asset that failed to load, a CSP that refused a module. A hardcoded
+        // minimum Chromium version would be a guess about *why*, and it would go stale the moment
+        // the shared renderer adopts newer syntax. It will: the floor moved to optional chaining
+        // without anyone noticing.
+        //
+        // The version is read only to make the message specific, never to decide anything.
+        scope.launch(Dispatchers.Main) {
+            val ready = withTimeoutOrNull(READY_TIMEOUT_MS) { pageReady.await() }
+            if (ready == null && !destroyed) {
+                val version = runCatching {
+                    WebViewCompat.getCurrentWebViewPackage(context)?.versionName
+                }.getOrNull()
+                Log.e(TAG, "the renderer never reported ready; WebView is $version")
+                onRendererUnavailable(version)
+            }
+        }
     }
 
     // ------------------------------------------------------------------ the path space
@@ -414,5 +443,14 @@ class WebViewDocumentHost(
         const val PAGE_URL = "$ORIGIN${ASSETS_PREFIX}renderer/android-host.html"
 
         const val BRIDGE_NAME = "__mdrHost"
+
+        /**
+         * How long the page gets to report ready before the renderer is called unusable.
+         *
+         * Generous on purpose. The spike measured ~1.15 s of fixed cost on a cold process start,
+         * and that was not the slowest device anyone owns — a false positive here would drop a
+         * working reader into raw text, which is far worse than waiting.
+         */
+        const val READY_TIMEOUT_MS = 10_000L
     }
 }
