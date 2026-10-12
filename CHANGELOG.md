@@ -3,6 +3,19 @@
 All notable changes to MarkReader are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.0.6] - 2026-10-12
+
+### Fixed
+- Saving a document now keeps its original text encoding. UTF-16 files, and files with a byte-order mark, used to be rewritten silently as UTF-8. If a file's encoding can't be read reliably, the editor now saves a copy instead of overwriting the original.
+- The editor now falls back to a file descriptor when it can't read a document directly, as the viewer already did. Files from more storage providers now open in the editor.
+
+### Improved
+- File types are detected in one place, from the file name and its MIME type, with the content used only to overrule them. Unknown files now open as plain text and `.csv` files as CSV, where both used to fall through to Markdown.
+
+### Changed
+- Moved all user-facing text into string resources so the app can be translated.
+- Updated GitHub Actions CI dependencies.
+
 ## [1.0.5] - 2026-10-04
 
 ### Improved
