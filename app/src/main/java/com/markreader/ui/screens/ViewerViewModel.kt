@@ -22,12 +22,12 @@ import com.markreader.ui.markdown.MarkwonRenderer
 import com.markreader.ui.markdown.SourceCodeRenderer
 import com.markreader.ui.UiMessage
 import com.markreader.ui.reader.SearchHighlightSpan
-import com.markreader.ExternalFileCache
 import com.markreader.R
-import com.markreader.FileTooLargeException
-import com.markreader.MAX_FILE_BYTES
-import com.markreader.readBoundedText
-import com.markreader.tryTakePersistablePermission
+import com.markreader.file.DocumentSource
+import com.markreader.file.FileTooLargeException
+import com.markreader.file.MAX_FILE_BYTES
+import com.markreader.file.TextCodec
+import com.markreader.file.tryTakePersistablePermission
 import android.graphics.Color
 import androidx.core.graphics.ColorUtils
 import kotlinx.coroutines.CancellationException
@@ -569,31 +569,12 @@ class ViewerViewModel(
         }
     }
 
-    private suspend fun readTextFromUri(uri: Uri): String? = withContext(Dispatchers.IO) {
-        val uriString = uri.toString()
-
-        // If MainActivity registered a pre-read for this URI (ACTION_VIEW flow), await
-        // its result. This handles restricted providers like DownloadStorageProvider that
-        // require ACTION_OPEN_DOCUMENT-style access and reject reads from ViewModel scope.
-        // The Activity guarantees the deferred completes (null on failure/cancellation),
-        // so awaiting without a timeout cannot hang.
-        val deferred = ExternalFileCache.consume(uriString)
-        if (deferred != null) {
-            val preloaded = deferred.await()
-            if (preloaded != null) return@withContext preloaded
-            // Pre-read failed; fall through to a direct attempt below.
-        }
-
-        val resolver = getApplication<Application>().contentResolver
-        resolver.openInputStream(uri)?.use { stream ->
-            return@withContext readBoundedText(stream)
-        }
-        resolver.openFileDescriptor(uri, "r")?.use { pfd ->
-            java.io.FileInputStream(pfd.fileDescriptor).use { stream ->
-                return@withContext readBoundedText(stream)
-            }
-        }
-        return@withContext null
+    private suspend fun readTextFromUri(uri: Uri): String? {
+        val bytes = DocumentSource.read(getApplication<Application>().contentResolver, uri)
+            ?: return null
+        // The viewer never writes, so it wants the text and not the encoding that came with it.
+        // Off the main thread regardless: this decodes up to MAX_FILE_BYTES.
+        return withContext(Dispatchers.Default) { TextCodec.decode(bytes).text }
     }
 
     private fun ensureReadPermission(uri: Uri) {

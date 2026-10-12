@@ -122,6 +122,7 @@ fun EditorScreen(
     // Resolved here rather than in the effect below, which is not a composable scope.
     val savedMessage = stringResource(R.string.editor_saved)
     val cannotSaveDirectlyMessage = stringResource(R.string.editor_cannot_save_directly)
+    val cannotSaveEncodingMessage = stringResource(R.string.editor_cannot_save_encoding)
     val saveAsLabel = stringResource(R.string.editor_save_as)
 
     val saveAsLauncher = rememberLauncherForActivityResult(
@@ -138,9 +139,14 @@ fun EditorScreen(
                 snackbarHostState.showSnackbar(savedMessage)
                 viewModel.onSaveResultConsumed()
             }
-            is SaveResult.NoPermission -> {
+            // Different cause, same remedy: a copy the app can write honestly.
+            is SaveResult.NoPermission, is SaveResult.UnknownEncoding -> {
                 val result = snackbarHostState.showSnackbar(
-                    message = cannotSaveDirectlyMessage,
+                    message = if (uiState.saveResult is SaveResult.UnknownEncoding) {
+                        cannotSaveEncodingMessage
+                    } else {
+                        cannotSaveDirectlyMessage
+                    },
                     actionLabel = saveAsLabel,
                     duration = SnackbarDuration.Long
                 )

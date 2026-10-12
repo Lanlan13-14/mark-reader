@@ -22,10 +22,6 @@
     <ID>LoopWithTooManyJumpStatements:SearchHighlightTextView.kt$SearchHighlightTextView$for</ID>
     <ID>LoopWithTooManyJumpStatements:TableRenderer.kt$for</ID>
     <ID>MagicNumber:EditorViewModel.kt$EditorViewModel$25</ID>
-    <ID>MagicNumber:FileIO.kt$1024</ID>
-    <ID>MagicNumber:FileIO.kt$3</ID>
-    <ID>MagicNumber:FileIO.kt$64</ID>
-    <ID>MagicNumber:FileIO.kt$FileTooLargeException$1024</ID>
     <ID>MagicNumber:HomeViewModel.kt$HomeViewModel$5_000</ID>
     <ID>MagicNumber:MainActivity.kt$MainActivity$33</ID>
     <ID>MagicNumber:MarkwonRenderer.kt$MarkwonRenderer$4f</ID>
@@ -41,9 +37,7 @@
     <ID>MagicNumber:TableRenderer.kt$75</ID>
     <ID>MagicNumber:TableRenderer.kt$8</ID>
     <ID>MagicNumber:ViewerViewModel.kt$ViewerViewModel$1024</ID>
-    <ID>MagicNumber:ViewerViewModel.kt$ViewerViewModel$20</ID>
     <ID>MagicNumber:ViewerViewModel.kt$ViewerViewModel$200</ID>
-    <ID>MagicNumber:ViewerViewModel.kt$ViewerViewModel$2000</ID>
     <ID>MagicNumber:ViewerViewModel.kt$ViewerViewModel$3</ID>
     <ID>MagicNumber:ViewerViewModel.kt$ViewerViewModel$300</ID>
     <ID>MagicNumber:ViewerViewModel.kt$ViewerViewModel$400</ID>
@@ -76,8 +70,6 @@
     <ID>SwallowedException:HomeViewModel.kt$HomeViewModel$e: Exception</ID>
     <ID>SwallowedException:RecentFilesRepository.kt$RecentFilesRepository$ex: IllegalArgumentException</ID>
     <ID>SwallowedException:RecentFilesRepository.kt$RecentFilesRepository$ex: SecurityException</ID>
-    <ID>SwallowedException:UriPermissions.kt$ex: IllegalArgumentException</ID>
-    <ID>SwallowedException:UriPermissions.kt$ex: SecurityException</ID>
     <ID>SwallowedException:ViewerViewModel.kt$ViewerViewModel$ex: Exception</ID>
     <ID>TooGenericExceptionCaught:EditorViewModel.kt$EditorViewModel$e: Exception</ID>
     <ID>TooGenericExceptionCaught:EditorViewModel.kt$EditorViewModel$ex: Exception</ID>

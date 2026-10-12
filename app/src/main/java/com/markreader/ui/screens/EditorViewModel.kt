@@ -11,11 +11,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.core.graphics.ColorUtils
-import com.markreader.ExternalFileCache
 import com.markreader.R
-import com.markreader.FileTooLargeException
-import com.markreader.readBoundedText
-import com.markreader.tryTakePersistablePermission
+import com.markreader.file.DocumentSource
+import com.markreader.file.FileTooLargeException
+import com.markreader.file.DecodedText
+import com.markreader.file.TextEncoding
+import com.markreader.file.TextCodec
+import com.markreader.file.tryTakePersistablePermission
 import com.markreader.data.AppThemeModePreference
 import com.markreader.data.PreferencesRepository
 import com.markreader.data.RecentFilesRepository
@@ -37,6 +39,13 @@ enum class EditorTab { Edit, Preview }
 sealed class SaveResult {
     data object Success : SaveResult()
     data object NoPermission : SaveResult()
+
+    /**
+     * The document was decoded lossily, so its bytes cannot be reproduced. Writing would
+     * save the replacement characters over whatever the original bytes were. Save As is
+     * the remedy: a new file, honestly UTF-8, with the original left alone.
+     */
+    data object UnknownEncoding : SaveResult()
 }
 
 data class EditorUiState(
@@ -48,6 +57,8 @@ data class EditorUiState(
     val isSaving: Boolean = false,
     val saveResult: SaveResult? = null,
     val previewText: android.text.Spanned? = null,
+    /** Null once a document has loaded means it cannot be written back — see [SaveResult.UnknownEncoding]. */
+    val encoding: TextEncoding? = null,
     val activeTab: EditorTab = EditorTab.Edit,
     val userPreferences: UserPreferences = UserPreferences(),
     val errorMessage: UiMessage? = null
@@ -76,7 +87,8 @@ class EditorViewModel(
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
                 fileName = UNTITLED_MARKDOWN,
-                isMarkdown = true
+                isMarkdown = true,
+                encoding = TextEncoding.Utf8
             )
         }
     }
@@ -104,8 +116,8 @@ class EditorViewModel(
             val fileName = resolveFileName(uri)
                 ?: getApplication<Application>().getString(R.string.untitled)
             var tooLarge = false
-            val content = try {
-                readTextFromUri(uri)
+            val decoded = try {
+                readDocument(uri)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: FileTooLargeException) {
@@ -118,10 +130,11 @@ class EditorViewModel(
                 isLoading = false,
                 fileName = fileName,
                 isMarkdown = DocumentTypeResolver.resolveFromHints(fileName) == DocumentType.Markdown,
-                textFieldValue = TextFieldValue(content ?: ""),
+                textFieldValue = TextFieldValue(decoded?.text ?: ""),
+                encoding = decoded?.encoding,
                 errorMessage = when {
                     tooLarge -> UiMessage(R.string.editor_error_file_too_large)
-                    content == null -> UiMessage(R.string.editor_error_read_failed)
+                    decoded == null -> UiMessage(R.string.editor_error_read_failed)
                     else -> null
                 }
             )
@@ -202,29 +215,25 @@ class EditorViewModel(
     fun save() {
         val uri = Uri.parse(currentUri ?: return)
         val content = _uiState.value.textFieldValue.text
+        // Refuse rather than guess. The read was lossy, so UTF-8 here would write replacement
+        // characters over bytes we never understood.
+        val encoding = _uiState.value.encoding ?: run {
+            _uiState.value = _uiState.value.copy(saveResult = SaveResult.UnknownEncoding)
+            return
+        }
         _uiState.value = _uiState.value.copy(isSaving = true, saveResult = null)
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val stream = getApplication<Application>().contentResolver
-                    .openOutputStream(uri, "wt")
-                if (stream != null) {
-                    stream.use { it.write(content.toByteArray()) }
-                    _uiState.value = _uiState.value.copy(
-                        isSaving = false, isModified = false, saveResult = SaveResult.Success
-                    )
-                } else {
-                    _uiState.value = _uiState.value.copy(
-                        isSaving = false, saveResult = SaveResult.NoPermission
-                    )
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // SecurityException (revoked grant), FileNotFoundException (deleted
-                // document), IOException — all remedied by saving a copy instead.
-                _uiState.value = _uiState.value.copy(
-                    isSaving = false, saveResult = SaveResult.NoPermission
+        viewModelScope.launch {
+            val written = DocumentSource.write(
+                getApplication<Application>().contentResolver,
+                uri,
+                TextCodec.encode(content, encoding)
+            )
+            _uiState.value = if (written) {
+                _uiState.value.copy(
+                    isSaving = false, isModified = false, saveResult = SaveResult.Success
                 )
+            } else {
+                _uiState.value.copy(isSaving = false, saveResult = SaveResult.NoPermission)
             }
         }
     }
@@ -232,11 +241,19 @@ class EditorViewModel(
     fun onSaveAs(newUri: Uri) {
         val content = _uiState.value.textFieldValue.text
         _uiState.value = _uiState.value.copy(isSaving = true, saveResult = null)
+        val encoding = _uiState.value.encoding ?: TextEncoding.Utf8
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) {
-                    getApplication<Application>().contentResolver
-                        .openOutputStream(newUri, "wt")?.use { it.write(content.toByteArray()) }
+                val written = DocumentSource.write(
+                    getApplication<Application>().contentResolver,
+                    newUri,
+                    TextCodec.encode(content, encoding)
+                )
+                if (!written) {
+                    _uiState.value = _uiState.value.copy(
+                        isSaving = false, saveResult = SaveResult.NoPermission
+                    )
+                    return@launch
                 }
                 // Keep the new document reachable after this session: without a
                 // persisted grant it can't be reopened, and recordOpen would skip it.
@@ -252,7 +269,9 @@ class EditorViewModel(
                     isSaving = false, isModified = false,
                     fileName = newFileName, saveResult = SaveResult.Success,
                     isMarkdown = DocumentTypeResolver.resolveFromHints(newFileName) ==
-                        DocumentType.Markdown
+                        DocumentType.Markdown,
+                    // The copy is written in a known encoding, so this one can be saved to.
+                    encoding = encoding
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -300,14 +319,10 @@ class EditorViewModel(
         return@withContext uri.lastPathSegment
     }
 
-    private suspend fun readTextFromUri(uri: Uri): String? = withContext(Dispatchers.IO) {
-        val deferred = ExternalFileCache.consume(uri.toString())
-        if (deferred != null) {
-            val preloaded = deferred.await()
-            if (preloaded != null) return@withContext preloaded
-        }
-        getApplication<Application>().contentResolver
-            .openInputStream(uri)?.use { readBoundedText(it) }
+    private suspend fun readDocument(uri: Uri): DecodedText? {
+        val bytes = DocumentSource.read(getApplication<Application>().contentResolver, uri)
+            ?: return null
+        return withContext(Dispatchers.Default) { TextCodec.decode(bytes) }
     }
 
     companion object {
