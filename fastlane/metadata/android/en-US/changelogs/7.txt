@@ -1,0 +1,5 @@
+• Saving keeps a file's original text encoding, including UTF-16 files.
+• If a file's encoding can't be read reliably, the editor saves a copy instead of overwriting it.
+• Unknown files open as plain text and CSV files as CSV instead of Markdown.
+• The editor opens files from more storage providers.
+• All app text is now translatable.
