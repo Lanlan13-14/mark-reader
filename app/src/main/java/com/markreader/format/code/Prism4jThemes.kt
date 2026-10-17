@@ -1,4 +1,4 @@
-package com.markreader.ui.markdown
+package com.markreader.format.code
 
 import android.graphics.Typeface
 import android.text.SpannableStringBuilder

@@ -27,7 +27,9 @@
     <string name="file_type_text">Text</string>
 
     <!-- Viewer chrome -->
+    <string name="viewer_subtitle_markdown">Markdown</string>
     <string name="viewer_subtitle_source_code">Source code</string>
+    <string name="viewer_subtitle_plain_text">Plain text</string>
     <string name="viewer_subtitle_raw_mode">Raw mode</string>
     <string name="viewer_subtitle_rendered_mode">Rendered mode</string>
     <string name="viewer_edit_file">Edit file</string>

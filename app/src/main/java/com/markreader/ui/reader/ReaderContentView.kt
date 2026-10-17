@@ -30,7 +30,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.markreader.data.CodeFontPreference
 import com.markreader.data.ReadingFontPreference
 import com.markreader.data.TextAlignmentPreference
-import com.markreader.ui.screens.HeadingItem
+import com.markreader.format.HeadingItem
 
 /**
  * A [ScrollView] that never scrolls itself to keep a focused descendant on screen.
@@ -110,18 +110,18 @@ fun RenderedTextView(
     lineHeight: Float,
     readingFont: ReadingFontPreference,
     codeFont: CodeFontPreference = CodeFontPreference.JetBrainsMono,
-    isSourceCode: Boolean = false,
+    isMonospaced: Boolean = false,
     textAlignment: TextAlignmentPreference,
     codeBlockBackgroundColor: Int
 ) {
-    val contentKey = remember(text, fontSizeSp, lineHeight, readingFont, codeFont, isSourceCode, textAlignment) {
+    val contentKey = remember(text, fontSizeSp, lineHeight, readingFont, codeFont, isMonospaced, textAlignment) {
         ContentKey(
             textHash = text.hashCode(),
             fontSizeSp = fontSizeSp,
             lineHeight = lineHeight,
             readingFont = readingFont,
             codeFont = codeFont,
-            isSourceCode = isSourceCode,
+            isMonospaced = isMonospaced,
             textAlignment = textAlignment
         )
     }
@@ -271,7 +271,7 @@ fun RenderedTextView(
                     } else {
                         val tv = createStyledTextView(
                             scrollView.context, paddingPx, fontSizeSp, lineHeight,
-                            readingFont, codeFont, isSourceCode, textAlignment, textColor, selectionHighlightColor,
+                            readingFont, codeFont, isMonospaced, textAlignment, textColor, selectionHighlightColor,
                             horizontalScroll = false
                         )
                         scrollView.addView(
@@ -362,7 +362,7 @@ fun RenderedTextView(
                                     // Fallback: plain text
                                     val tv = createStyledTextView(
                                         container.context, 0, fontSizeSp, lineHeight,
-                                        readingFont, codeFont, isSourceCode, textAlignment,
+                                        readingFont, codeFont, isMonospaced, textAlignment,
                                         textColor, selectionHighlightColor,
                                         horizontalScroll = false
                                     )
@@ -381,7 +381,7 @@ fun RenderedTextView(
                                 val tv = createStyledTextView(
                                     container.context, 0, fontSizeSp, lineHeight,
                                     readingFont, codeFont,
-                                    isSourceCode = isSourceCode || isCode,
+                                    isMonospaced = isMonospaced || isCode,
                                     textAlignment = textAlignment,
                                     textColor = textColor,
                                     selectionHighlightColor = selectionHighlightColor,
@@ -508,7 +508,7 @@ fun RenderedTextView(
                                 )
                                 is TextView -> applyStyleToTextView(
                                     inner, fontSizeSp, lineHeight, readingFont, codeFont,
-                                    isSourceCode, textAlignment, textColor,
+                                    isMonospaced, textAlignment, textColor,
                                     selectionHighlightColor
                                 )
                             }
@@ -543,7 +543,7 @@ fun RenderedTextView(
                     }
                     if (controller.lastStyleKey != contentKey) {
                         applyStyleToTextView(
-                            textView, fontSizeSp, lineHeight, readingFont, codeFont, isSourceCode,
+                            textView, fontSizeSp, lineHeight, readingFont, codeFont, isMonospaced,
                             textAlignment, textColor, selectionHighlightColor
                         )
                         controller.lastStyleKey = contentKey

@@ -1,7 +1,7 @@
 package com.markreader.ui.reader
 
-import com.markreader.ui.markdown.CodeBlockMarkerSpan
-import com.markreader.ui.markdown.TableMarkerSpan
+import com.markreader.format.markdown.CodeBlockMarkerSpan
+import com.markreader.format.markdown.TableMarkerSpan
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

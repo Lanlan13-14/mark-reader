@@ -12,7 +12,7 @@ internal data class ContentKey(
     val lineHeight: Float,
     val readingFont: ReadingFontPreference,
     val codeFont: CodeFontPreference,
-    val isSourceCode: Boolean,
+    val isMonospaced: Boolean,
     val textAlignment: TextAlignmentPreference
 )
 
@@ -100,7 +100,7 @@ internal class ReaderContentController(
             lineHeight = -1f,
             readingFont = ReadingFontPreference.Merriweather,
             codeFont = CodeFontPreference.JetBrainsMono,
-            isSourceCode = false,
+            isMonospaced = false,
             textAlignment = TextAlignmentPreference.Left
         )
     }

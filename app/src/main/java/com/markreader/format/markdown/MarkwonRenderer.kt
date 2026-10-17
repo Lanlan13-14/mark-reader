@@ -1,9 +1,12 @@
-package com.markreader.ui.markdown
+package com.markreader.format.markdown
 
 import android.content.Context
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import androidx.annotation.ColorInt
+import com.markreader.format.code.Prism4jThemeOneDark
+import com.markreader.format.code.Prism4jThemeOneLight
+import com.markreader.format.code.PrismGrammarLocatorImpl
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.Markwon
 import io.noties.markwon.MarkwonSpansFactory

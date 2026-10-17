@@ -8,6 +8,7 @@ import android.text.Spanned
 import android.graphics.Typeface
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -18,8 +19,12 @@ import com.markreader.data.RecentFilesRepository
 import com.markreader.data.UserPreferences
 import com.markreader.file.DocumentType
 import com.markreader.file.DocumentTypeResolver
-import com.markreader.ui.markdown.MarkwonRenderer
-import com.markreader.ui.markdown.SourceCodeRenderer
+import com.markreader.format.DocumentFormat
+import com.markreader.format.FormatCapabilities
+import com.markreader.format.FormatRegistry
+import com.markreader.format.HeadingItem
+import com.markreader.format.ReaderContent
+import com.markreader.format.RenderTheme
 import com.markreader.ui.UiMessage
 import com.markreader.ui.reader.SearchHighlightSpan
 import com.markreader.R
@@ -28,8 +33,6 @@ import com.markreader.file.FileTooLargeException
 import com.markreader.file.MAX_FILE_BYTES
 import com.markreader.file.TextCodec
 import com.markreader.file.tryTakePersistablePermission
-import android.graphics.Color
-import androidx.core.graphics.ColorUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -43,12 +46,6 @@ enum class ViewMode {
     Rendered,
     Raw
 }
-
-data class HeadingItem(
-    val text: String,
-    val level: Int,
-    val offset: Int
-)
 
 data class ViewerUiState(
     val isLoading: Boolean = true,
@@ -69,7 +66,11 @@ data class ViewerUiState(
     val searchMatchCount: Int = 0,
     val searchMatchIndex: Int = 0,
     val userPreferences: UserPreferences = UserPreferences(),
-    val documentType: DocumentType = DocumentType.PlainText
+    val documentType: DocumentType = DocumentType.PlainText,
+    /** What the chrome may offer, decided by the document's format rather than by its type. */
+    val capabilities: FormatCapabilities = FormatCapabilities(),
+    /** Shown in place of a view mode where [capabilities] says there is no raw view. */
+    @StringRes val formatNameRes: Int = R.string.viewer_subtitle_plain_text
 )
 
 class ViewerViewModel(
@@ -78,14 +79,15 @@ class ViewerViewModel(
 ) : AndroidViewModel(application) {
     private data class RenderCacheKey(
         val documentType: DocumentType,
-        val isDark: Boolean
+        val theme: RenderTheme
     )
 
     private val repository = PreferencesRepository.getInstance(application)
     private val recentFilesRepository = RecentFilesRepository.getInstance(application)
     private var systemDarkTheme = false
-    private val rendererCache = mutableMapOf<Boolean, MarkwonRenderer>()
-    private val sourceCodeRendererCache = mutableMapOf<Boolean, SourceCodeRenderer>()
+    private val formats = FormatRegistry(application)
+    /** The format for the document on screen, held so its renderers survive a theme toggle. */
+    private var currentFormat: DocumentFormat? = null
     private var currentUri: String? = null
     private var loadJob: Job? = null
     private var loadingJob: Job? = null
@@ -227,15 +229,14 @@ class ViewerViewModel(
             }
 
             val documentType = DocumentTypeResolver.resolve(fileName, mimeType, markdown)
-            val isDark = renderDarkModeOverride ?: isDarkTheme(_uiState.value.userPreferences, systemDarkTheme)
-            val rendered = render(documentType, isDark, markdown)
-            val headings = if (documentType == DocumentType.Markdown) {
-                parseHeadings(markdown, rendered?.toString())
-            } else {
-                emptyList()
-            }
+            val format = formats.formatFor(documentType)
+            currentFormat = format
+            val theme = RenderTheme(
+                renderDarkModeOverride ?: isDarkTheme(_uiState.value.userPreferences, systemDarkTheme)
+            )
+            val loaded = format?.load(markdown, theme).asSpans()
 
-            if (rendered == null) {
+            if (format == null || loaded == null) {
                 loadingJob?.cancel()
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -247,33 +248,37 @@ class ViewerViewModel(
                     searchQuery = "",
                     searchMatchCount = 0,
                     searchMatchIndex = 0,
+                    documentType = documentType,
+                    // A null format is DocumentType.Binary: bytes that are not text, so there
+                    // is no format to ask and nothing but the raw view to offer.
+                    capabilities = format?.capabilities ?: FormatCapabilities(),
+                    formatNameRes = format?.nameRes ?: R.string.viewer_subtitle_raw_mode,
                     warningMessage = UiMessage(
-                        when (documentType) {
-                            DocumentType.Binary -> R.string.viewer_warning_binary
-                            is DocumentType.SourceCode -> R.string.viewer_warning_source_code
-                            else -> R.string.viewer_warning_markdown
-                        }
+                        format?.renderFailureWarningRes ?: R.string.viewer_warning_binary
                     )
                 )
                 baseRendered = null
                 return@launch
             }
 
+            val headings = format.headings(markdown, loaded)
             loadingJob?.cancel()
-            baseRendered = rendered
-            renderCache[RenderCacheKey(documentType, isDark)] = rendered
+            baseRendered = loaded.spanned
+            renderCache[RenderCacheKey(documentType, theme)] = loaded.spanned
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
                 isLoadingVisible = false,
                 fileName = fileName,
                 rawText = markdown,
                 rawHighlighted = null,
-                rendered = rendered,
+                rendered = loaded.spanned,
                 errorMessage = null,
                 warningMessage = null,
                 headings = headings,
                 activeHeadingIndex = clampActiveHeadingIndex(_uiState.value.activeHeadingIndex, headings),
-                documentType = documentType
+                documentType = documentType,
+                capabilities = format.capabilities,
+                formatNameRes = format.nameRes
             )
 
             applySearchQuery(_uiState.value.searchQuery)
@@ -417,7 +422,7 @@ class ViewerViewModel(
                     prefs.lineHeight != previous.lineHeight
 
                 if (themeChanged) {
-                    invalidateRendererCaches()
+                    formats.invalidateRenderers()
                 }
 
                 _uiState.value = _uiState.value.copy(userPreferences = prefs)
@@ -434,98 +439,47 @@ class ViewerViewModel(
         }
     }
 
-    private fun getMarkwonRenderer(isDark: Boolean): MarkwonRenderer {
-        return rendererCache.getOrPut(isDark) {
-            MarkwonRenderer(getApplication(), isDark, codeBackground(isDark))
-        }
-    }
-
-    private fun getSourceCodeRenderer(isDark: Boolean): SourceCodeRenderer {
-        return sourceCodeRendererCache.getOrPut(isDark) {
-            SourceCodeRenderer(isDark)
-        }
-    }
-
-    private fun invalidateRendererCaches() {
-        rendererCache.clear()
-        sourceCodeRendererCache.clear()
-    }
-
-    private suspend fun renderMarkdown(isDark: Boolean, markdown: String): Spanned? {
-        return try {
-            getMarkwonRenderer(isDark).render(markdown)
-        } catch (ex: CancellationException) {
-            throw ex
-        } catch (ex: Exception) {
-            null
-        }
-    }
-
-    /**
-     * The one dispatch point. Null means "there is nothing to render" — only [DocumentType.Binary]
-     * says so outright; the others return null when their renderer fails, and the caller drops
-     * to raw text with a warning either way.
-     */
-    private suspend fun render(documentType: DocumentType, isDark: Boolean, text: String): Spanned? =
-        when (documentType) {
-            DocumentType.Binary -> null
-            DocumentType.Markdown -> renderMarkdown(isDark, text)
-            is DocumentType.SourceCode -> renderSourceCode(isDark, text, documentType.language)
-            // Csv keeps its own reader for later; until then it reads as what it also is,
-            // which is text — and text that is not pretending to be Markdown prose.
-            DocumentType.Csv, DocumentType.PlainText -> SpannableString(text)
-        }
-
-    private suspend fun renderSourceCode(isDark: Boolean, code: String, language: String): Spanned? {
-        return try {
-            getSourceCodeRenderer(isDark).highlight(code, language)
-        } catch (ex: CancellationException) {
-            throw ex
-        } catch (ex: Exception) {
-            null
-        }
-    }
-
     private fun rebuildRenderedForTheme() {
         val markdown = _uiState.value.rawText
         if (markdown.isBlank()) return
-        val prefs = _uiState.value.userPreferences
-        val isDark = renderDarkModeOverride ?: isDarkTheme(prefs, systemDarkTheme)
+        val format = currentFormat ?: return
+        val theme = currentTheme()
         val documentType = _uiState.value.documentType
         viewModelScope.launch {
-            if (tryApplyCachedRender(documentType, isDark)) {
+            if (tryApplyCachedRender(documentType, theme)) {
                 return@launch
             }
-            val rendered = render(documentType, isDark, markdown)
-            if (rendered != null) {
-                baseRendered = rendered
-                renderCache[RenderCacheKey(documentType, isDark)] = rendered
-                _uiState.value = _uiState.value.copy(rendered = rendered)
-                applySearchQuery(_uiState.value.searchQuery)
-            }
+            val loaded = format.load(markdown, theme).asSpans() ?: return@launch
+            baseRendered = loaded.spanned
+            renderCache[RenderCacheKey(documentType, theme)] = loaded.spanned
+            _uiState.value = _uiState.value.copy(rendered = loaded.spanned)
+            applySearchQuery(_uiState.value.searchQuery)
         }
     }
 
     private fun scheduleRebuild() {
         rebuildJob?.cancel()
-        val prefs = _uiState.value.userPreferences
-        val isDark = renderDarkModeOverride ?: isDarkTheme(prefs, systemDarkTheme)
-        if (tryApplyCachedRender(_uiState.value.documentType, isDark)) {
+        if (tryApplyCachedRender(_uiState.value.documentType, currentTheme())) {
             return
         }
         rebuildJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(50)
+            kotlinx.coroutines.delay(REBUILD_DEBOUNCE_MS)
             rebuildRenderedForTheme()
         }
     }
 
-    private fun tryApplyCachedRender(documentType: DocumentType, isDark: Boolean): Boolean {
-        val cached = renderCache[RenderCacheKey(documentType, isDark)] ?: return false
+    private fun tryApplyCachedRender(documentType: DocumentType, theme: RenderTheme): Boolean {
+        val cached = renderCache[RenderCacheKey(documentType, theme)] ?: return false
         baseRendered = cached
         _uiState.value = _uiState.value.copy(rendered = cached)
         applySearchQuery(_uiState.value.searchQuery)
         return true
     }
+
+    /** The surface the document is being drawn on: the reader's own override, else the app theme. */
+    private fun currentTheme(): RenderTheme = RenderTheme(
+        renderDarkModeOverride ?: isDarkTheme(_uiState.value.userPreferences, systemDarkTheme)
+    )
 
     /**
      * The read failure, with whatever the exception gave us appended. The class name
@@ -699,37 +653,6 @@ class ViewerViewModel(
         }
     }
 
-    private fun parseHeadings(markdown: String, renderedText: String?): List<HeadingItem> {
-        val headings = mutableListOf<HeadingItem>()
-        var offset = 0
-        var renderedCursor = 0
-        markdown.lineSequence().forEach { line ->
-            val trimmed = line.trimStart()
-            if (trimmed.startsWith("#")) {
-                val level = trimmed.takeWhile { it == '#' }.length
-                if (level in 1..3) {
-                    val text = trimmed.drop(level).trim()
-                    if (text.isNotBlank()) {
-                        val renderedOffset = if (!renderedText.isNullOrEmpty()) {
-                            val found = renderedText.indexOf(text, renderedCursor)
-                            if (found >= 0) {
-                                renderedCursor = (found + text.length).coerceAtMost(renderedText.length)
-                                found
-                            } else {
-                                offset.coerceAtMost(renderedText.length - 1)
-                            }
-                        } else {
-                            offset
-                        }
-                        headings.add(HeadingItem(text = text, level = level, offset = renderedOffset))
-                    }
-                }
-            }
-            offset += line.length + 1
-        }
-        return headings
-    }
-
     private fun clampActiveHeadingIndex(current: Int, headings: List<HeadingItem>): Int {
         if (headings.isEmpty()) return -1
         if (current < 0) return -1
@@ -737,11 +660,8 @@ class ViewerViewModel(
     }
 
     companion object {
-        /** Matches Markwon's default: text color at ~10% alpha. */
-        private fun codeBackground(isDark: Boolean): Int {
-            val textColor = if (isDark) Color.WHITE else Color.BLACK
-            return ColorUtils.setAlphaComponent(textColor, 25)
-        }
+        /** Coalesces the burst of preference emissions a single theme switch produces. */
+        private const val REBUILD_DEBOUNCE_MS = 50L
 
         private fun isDarkTheme(prefs: UserPreferences, isSystemDarkTheme: Boolean): Boolean {
             return when (prefs.appThemeMode) {
@@ -764,3 +684,10 @@ class ViewerViewModel(
         }
     }
 }
+
+/**
+ * The reader surface still draws styled text and nothing else, so this is where the other two
+ * [ReaderContent] shapes stop. P4 retypes the surface and this narrowing goes with it — until
+ * then no format produces a [ReaderContent.Html] or [ReaderContent.Table] to lose.
+ */
+private fun ReaderContent?.asSpans(): ReaderContent.Spans? = this as? ReaderContent.Spans

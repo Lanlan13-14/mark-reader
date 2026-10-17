@@ -1,4 +1,4 @@
-package com.markreader.ui.markdown;
+package com.markreader.format.code;
 
 import io.noties.prism4j.annotations.PrismBundle;
 

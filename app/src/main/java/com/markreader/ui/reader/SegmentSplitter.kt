@@ -1,8 +1,8 @@
 package com.markreader.ui.reader
 
 import android.text.Spanned
-import com.markreader.ui.markdown.CodeBlockMarkerSpan
-import com.markreader.ui.markdown.TableMarkerSpan
+import com.markreader.format.markdown.CodeBlockMarkerSpan
+import com.markreader.format.markdown.TableMarkerSpan
 
 internal enum class SegmentType { Text, Code, Table }
 

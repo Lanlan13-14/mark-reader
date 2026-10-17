@@ -1,6 +1,6 @@
 package com.markreader.ui.reader
 
-import com.markreader.ui.screens.HeadingItem
+import com.markreader.format.HeadingItem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
