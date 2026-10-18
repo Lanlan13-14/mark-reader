@@ -136,7 +136,6 @@ internal class WindowedReaderHost(
         val previous = source
         source = text
         if (previous != null && previous.toString() == text.toString() && chunks.isNotEmpty()) {
-            refill(text)
             return
         }
         val ranges = ReadingWindow.chunkRanges(text)
@@ -258,21 +257,19 @@ internal class WindowedReaderHost(
         return resolved
     }
 
-    /** Line position of [offset] inside chunk [index], mounting the chunk first if needed. */
-    private fun scrollYInChunk(index: Int, offset: Int, current: ChunkStyle): Int? {
+    /** Line position of [offset] inside chunk [index], estimated when the chunk is not mounted. */
+    private fun scrollYInChunk(index: Int, offset: Int): Int {
         val chunk = chunks[index]
-        if (chunk.view == null) {
-            remount(index..index, current)
-            mounted = index..index
-            container.requestLayout()
-            // The caller retries. Posting the retry here covers the case where mounting this
-            // chunk changes nothing the caller is observing, so no recomposition would retry it.
-            scrollView.post { scrollView.requestLayout() }
+        val base = ReadingWindow.offsetOf(measuredHeights(), index)
+        val lines = chunk.view?.let { segmentPlacement(it).lines }
+        if (lines != null && lines.textLength > 0) {
+            val local = (offset - chunk.start).coerceIn(0, lines.textLength - 1)
+            return base + lines.getLineTop(lines.getLineForOffset(local))
         }
-        val lines = chunk.view?.let { segmentPlacement(it).lines } ?: return null
-        val local = (offset - chunk.start).coerceIn(0, (lines.textLength - 1).coerceAtLeast(0))
-        val lineTop = lines.getLineTop(lines.getLineForOffset(local))
-        return ReadingWindow.offsetOf(measuredHeights(), index) + lineTop
+        val height = chunk.measuredHeight.takeIf { it > 0 } ?: averageHeight
+        val span = (chunk.end - chunk.start).coerceAtLeast(1)
+        val local = (offset - chunk.start).coerceIn(0, span - 1)
+        return base + height * local / span
     }
 
     /** Rendered-text offset at the top of the viewport, for restoring a position by content. */
@@ -341,7 +338,7 @@ internal fun ChunkBody.showSearch(
 }
 
 
-private class ChunkBody(context: Context, style: ChunkStyle) : LinearLayout(context) {
+internal class ChunkBody(context: Context, style: ChunkStyle) : LinearLayout(context) {
     private var builtForWrap = style.typography.isCodeBlockWrapEnabled
     internal var plain: List<CharSequence> = emptyList()
 

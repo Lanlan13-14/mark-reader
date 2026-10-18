@@ -99,6 +99,7 @@ class ViewerViewModel(
     private var renderDarkModeOverride: Boolean? = null
     private var preferencesLoaded = false
     private var pendingExternalRerender = initialUri != null
+    private var matches: SearchMatches = SearchMatches.find("", "")
     private var renderCacheTextHash = 0
     private val renderCache = mutableMapOf<RenderCacheKey, Spanned>()
 

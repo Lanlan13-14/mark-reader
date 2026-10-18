@@ -73,7 +73,7 @@ internal fun highlightedSlice(
  * The positions are all a search actually needs: the count, the current one, and where to scroll.
  * Painting them is the text view's job, and it only paints the ones on screen.
  */
-internal class SearchMatches(val query: String, private val ranges: IntArray) {
+class SearchMatches internal constructor(val query: String, private val ranges: IntArray) {
 
     val count: Int = ranges.size / 2
 
