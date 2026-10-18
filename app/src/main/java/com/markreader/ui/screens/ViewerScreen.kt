@@ -121,7 +121,9 @@ import com.markreader.ui.components.segmentShape
 import com.markreader.format.HeadingItem
 import com.markreader.ui.export.ExportManager
 import com.markreader.ui.resolve
+import com.markreader.ui.reader.ReaderSearch
 import com.markreader.ui.reader.RenderedTextView
+import com.markreader.ui.reader.SearchPalette
 import kotlin.math.roundToInt
 
 /**
@@ -761,7 +763,7 @@ fun ViewerScreen(
                 }
                 else -> {
                     val text = if (uiState.viewMode == ViewMode.Raw) {
-                        uiState.rawHighlighted ?: uiState.rawText
+                        uiState.rawText
                     } else {
                         uiState.rendered ?: uiState.rawText
                     }
@@ -780,6 +782,17 @@ fun ViewerScreen(
                             padding = PaddingValues(0.dp),
                             contentTopInset = if (hasWarning) 0.dp else chromeTopInset,
                             savedScrollY = savedScrollY,
+                            search = rememberUpdatedState(
+                                ReaderSearch(
+                                    uiState.searchMatches,
+                                    uiState.searchMatchIndex,
+                                    SearchPalette(
+                                        passive = if (isSurfaceDark) 0x66FFD54F.toInt() else 0x553197F5.toInt(),
+                                        active = if (isSurfaceDark) 0xCCFFD54F.toInt() else 0xFF1565C0.toInt(),
+                                        activeText = if (isSurfaceDark) 0xFF1A1A1A.toInt() else 0xFFFFFFFF.toInt()
+                                    )
+                                )
+                            ),
                             scrollToOffset = scrollToOffset,
                             onScrollChanged = viewModel::onScrollPositionChanged,
                             onScrollExtentChanged = viewModel::onScrollExtentChanged,

@@ -3,11 +3,8 @@ package com.markreader.ui.screens
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
-import android.text.SpannableString
 import android.text.Spanned
-import android.graphics.Typeface
-import android.text.style.ForegroundColorSpan
-import android.text.style.StyleSpan
+import com.markreader.ui.reader.SearchMatches
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -65,6 +62,11 @@ data class ViewerUiState(
     val searchQuery: String = "",
     val searchMatchCount: Int = 0,
     val searchMatchIndex: Int = 0,
+    /**
+     * Match positions only. Not part of the rendered text: copying a large document to attach a
+     * span per match is what made searching one stall. Null while no query is active.
+     */
+    val searchMatches: SearchMatches? = null,
     val userPreferences: UserPreferences = UserPreferences(),
     val documentType: DocumentType = DocumentType.PlainText,
     /** What the chrome may offer, decided by the document's format rather than by its type. */
@@ -97,6 +99,7 @@ class ViewerViewModel(
     private var renderDarkModeOverride: Boolean? = null
     private var preferencesLoaded = false
     private var pendingExternalRerender = initialUri != null
+    private var matches: SearchMatches = SearchMatches.find("", "")
     private var renderCacheTextHash = 0
     private val renderCache = mutableMapOf<RenderCacheKey, Spanned>()
 
@@ -135,7 +138,7 @@ class ViewerViewModel(
         loadJob = viewModelScope.launch {
             loadingJob?.cancel()
             searchJob?.cancel()
-            _matchOffsets = emptyList()
+            matches = SearchMatches.find("", "")
             _scrollProgress.value = null
             _uiState.value = _uiState.value.copy(
                 isLoading = true,
@@ -152,7 +155,8 @@ class ViewerViewModel(
                 isSearchActive = false,
                 searchQuery = "",
                 searchMatchCount = 0,
-                searchMatchIndex = 0
+                searchMatchIndex = 0,
+                searchMatches = null
             )
 
             loadingJob = viewModelScope.launch {
@@ -199,7 +203,8 @@ class ViewerViewModel(
                     rawHighlighted = null,
                     searchQuery = "",
                     searchMatchCount = 0,
-                    searchMatchIndex = 0
+                    searchMatchIndex = 0,
+                searchMatches = null
                 )
                 return@launch
             }
@@ -223,7 +228,8 @@ class ViewerViewModel(
                     isEmptyFile = true,
                     searchQuery = "",
                     searchMatchCount = 0,
-                    searchMatchIndex = 0
+                    searchMatchIndex = 0,
+                searchMatches = null
                 )
                 return@launch
             }
@@ -248,6 +254,7 @@ class ViewerViewModel(
                     searchQuery = "",
                     searchMatchCount = 0,
                     searchMatchIndex = 0,
+                searchMatches = null,
                     documentType = documentType,
                     // A null format is DocumentType.Binary: bytes that are not text, so there
                     // is no format to ask and nothing but the raw view to offer.
@@ -305,7 +312,8 @@ class ViewerViewModel(
             isSearchActive = active,
             searchQuery = if (active) _uiState.value.searchQuery else "",
             searchMatchCount = 0,
-            searchMatchIndex = 0
+            searchMatchIndex = 0,
+                searchMatches = null
         )
         if (!active) {
             searchJob?.cancel()
@@ -316,7 +324,8 @@ class ViewerViewModel(
     fun onSearchQueryChanged(query: String) {
         _uiState.value = _uiState.value.copy(
             searchQuery = query,
-            searchMatchIndex = 0
+            searchMatchIndex = 0,
+                searchMatches = null
         )
         searchJob?.cancel()
         if (query.isBlank()) {
@@ -330,7 +339,7 @@ class ViewerViewModel(
             applySearchQuery(query)
             // Bring the first match into view; without this, a query whose
             // matches are all off-screen gives no visible feedback.
-            _matchOffsets.firstOrNull()?.let { _scrollToOffset.value = it }
+            if (matches.count > 0) _scrollToOffset.value = matches.startAt(0)
         }
     }
 
@@ -339,7 +348,7 @@ class ViewerViewModel(
         if (count == 0) return
         val next = (_uiState.value.searchMatchIndex + 1) % count
         _uiState.value = _uiState.value.copy(searchMatchIndex = next)
-        _scrollToOffset.value = _matchOffsets.getOrNull(next)
+        _scrollToOffset.value = matches.startAt(next)
         applySearchQuery(_uiState.value.searchQuery)
     }
 
@@ -348,7 +357,7 @@ class ViewerViewModel(
         if (count == 0) return
         val prev = if (_uiState.value.searchMatchIndex - 1 < 0) count - 1 else _uiState.value.searchMatchIndex - 1
         _uiState.value = _uiState.value.copy(searchMatchIndex = prev)
-        _scrollToOffset.value = _matchOffsets.getOrNull(prev)
+        _scrollToOffset.value = matches.startAt(prev)
         applySearchQuery(_uiState.value.searchQuery)
     }
 
@@ -539,8 +548,6 @@ class ViewerViewModel(
         )
     }
 
-    private var _matchOffsets: List<Int> = emptyList()
-
     private fun applySearchQuery(query: String) {
         val currentState = _uiState.value
         val activeViewMode = currentState.viewMode
@@ -550,105 +557,46 @@ class ViewerViewModel(
         }
 
         if (activeViewMode == ViewMode.Rendered && baseRendered == null) {
-            _matchOffsets = emptyList()
+            matches = SearchMatches.find("", "")
             _uiState.value = currentState.copy(
                 rawHighlighted = null,
                 searchMatchCount = 0,
-                searchMatchIndex = 0
+                searchMatchIndex = 0,
+                searchMatches = null
             )
             return
         }
 
         if (query.isBlank()) {
-            _matchOffsets = emptyList()
+            matches = SearchMatches.find("", "")
             _uiState.value = _uiState.value.copy(
                 rendered = baseRendered,
                 rawHighlighted = null,
                 searchMatchCount = 0,
-                searchMatchIndex = 0
+                searchMatchIndex = 0,
+                searchMatches = null
             )
             return
         }
 
-        val pattern = Regex(Regex.escape(query), setOf(RegexOption.IGNORE_CASE))
-        val ranges = pattern.findAll(baseText).map { it.range }.toList()
-        val offsets = ranges.map { it.first }
+        matches = SearchMatches.find(baseText, query)
+        val count = matches.count
+        val activeIndex = _uiState.value.searchMatchIndex.coerceIn(0, (count - 1).coerceAtLeast(0))
 
-        _matchOffsets = offsets
-
-        val highlighted = when (activeViewMode) {
-            ViewMode.Rendered -> SpannableString(baseRendered)
-            ViewMode.Raw -> SpannableString(baseText)
-        }
-        val prefs = _uiState.value.userPreferences
-        val isDark = renderDarkModeOverride ?: isDarkTheme(prefs, systemDarkTheme)
-        val activeTheme = if (isDark) prefs.readerDarkTheme else prefs.readerLightTheme
-        val isSepia = activeTheme == com.markreader.data.ReaderThemePreference.Sepia
-        val matchBackgroundColor = when {
-            isDark -> 0x66FFD54F.toInt()
-            isSepia -> 0x55A85A00.toInt()
-            else -> 0x553197F5.toInt()
-        }
-        val activeMatchBackgroundColor = when {
-            isDark -> 0xCCFFD54F.toInt()
-            isSepia -> 0xDD8B4513.toInt()
-            else -> 0xFF1565C0.toInt()
-        }
-        val activeMatchTextColor = when {
-            isDark -> 0xFF1A1A1A.toInt()
-            isSepia -> 0xFFFFFFFF.toInt()
-            else -> 0xFFFFFFFF.toInt()
-        }
-        // Passive highlights are capped: thousands of spans stall the TextView.
-        // Every match stays countable and navigable via _matchOffsets, and the
-        // active match is always styled below regardless of this cap.
-        for (range in ranges.take(400)) {
-            val start = range.first
-            val end = (range.last + 1).coerceAtMost(highlighted.length)
-            highlighted.setSpan(
-                SearchHighlightSpan(matchBackgroundColor, isActive = false),
-                start,
-                end,
-                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-        }
-        val activeIndex = _uiState.value.searchMatchIndex.coerceIn(0, (offsets.size - 1).coerceAtLeast(0))
-        if (ranges.isNotEmpty()) {
-            val activeRange = ranges[activeIndex]
-            val activeOffset = activeRange.first
-            val activeEnd = (activeRange.last + 1).coerceAtMost(highlighted.length)
-            highlighted.setSpan(
-                SearchHighlightSpan(activeMatchBackgroundColor, isActive = true),
-                activeOffset,
-                activeEnd,
-                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-            highlighted.setSpan(
-                ForegroundColorSpan(activeMatchTextColor),
-                activeOffset,
-                activeEnd,
-                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-            highlighted.setSpan(
-                StyleSpan(Typeface.BOLD),
-                activeOffset,
-                activeEnd,
-                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-        }
-
-        _uiState.value = when (activeViewMode) {
+                _uiState.value = when (activeViewMode) {
             ViewMode.Rendered -> _uiState.value.copy(
-                rendered = highlighted,
+                rendered = baseRendered,
                 rawHighlighted = null,
-                searchMatchCount = offsets.size,
-                searchMatchIndex = if (offsets.isEmpty()) 0 else activeIndex
+                searchMatches = matches,
+                searchMatchCount = count,
+                searchMatchIndex = if (count == 0) 0 else activeIndex
             )
             ViewMode.Raw -> _uiState.value.copy(
                 rendered = baseRendered,
-                rawHighlighted = highlighted,
-                searchMatchCount = offsets.size,
-                searchMatchIndex = if (offsets.isEmpty()) 0 else activeIndex
+                rawHighlighted = null,
+                searchMatches = matches,
+                searchMatchCount = count,
+                searchMatchIndex = if (count == 0) 0 else activeIndex
             )
         }
     }
