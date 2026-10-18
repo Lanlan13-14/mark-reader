@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -98,6 +99,7 @@ fun RenderedTextView(
     // only ever read to restore a position, so it is read without snapshot
     // observation below.
     savedScrollY: State<Int>,
+    search: State<ReaderSearch> = mutableStateOf(ReaderSearch(null, 0, SearchPalette(0, 0, 0))),
     scrollToOffset: Int?,
     onScrollChanged: (scrollY: Int, maxScrollY: Int) -> Unit,
     onScrollExtentChanged: (maxScrollY: Int) -> Unit,
@@ -112,10 +114,7 @@ fun RenderedTextView(
     codeFont: CodeFontPreference = CodeFontPreference.JetBrainsMono,
     isMonospaced: Boolean = false,
     textAlignment: TextAlignmentPreference,
-    codeBlockBackgroundColor: Int,
-    searchMatches: SearchMatches? = null,
-    searchMatchIndex: Int = 0,
-    searchPalette: SearchPalette = SearchPalette(0, 0, 0)
+    codeBlockBackgroundColor: Int
 ) {
     // A long rendered document is read through a window: only the chunks near the viewport are
     // real views, and the rest are spacers. Short documents, raw text and the editor preview
@@ -346,7 +345,7 @@ fun RenderedTextView(
                         ),
                         contentKey,
                         SearchPaint(
-                            searchMatches, searchMatchIndex, searchPalette,
+                            search.value.matches, search.value.index, search.value.palette,
                             contentTopInset.value, contentTopPx, paddingPx
                         )
                     )
@@ -713,6 +712,13 @@ private fun leaveWindow(scrollView: android.widget.ScrollView, controller: Reade
     controller.lastTextHash = 0
     controller.lastTextRef = null
 }
+
+/** A search as the reader consumes it: the positions, the current one, and its colours. */
+internal class ReaderSearch(
+    val matches: SearchMatches?,
+    val index: Int,
+    val palette: SearchPalette
+)
 
 /** The search and the two insets the window needs, grouped so the call stays short. */
 private class SearchPaint(
