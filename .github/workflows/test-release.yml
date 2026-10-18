@@ -1,0 +1,52 @@
+name: Test release
+
+# Builds an installable release APK without the upstream signing key.
+# The key is generated on the runner for this job only and is never stored.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build a test-signed release
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Create a throwaway signing key
+        run: |
+          PASSWORD=$(openssl rand -base64 24)
+          keytool -genkeypair -keystore "$RUNNER_TEMP/test.jks" -storetype PKCS12 \
+            -alias markreader -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass "$PASSWORD" -keypass "$PASSWORD" -dname "CN=Mark Reader test"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/test.jks" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=markreader" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        run: ./gradlew assembleRelease
+
+      - name: Rename APK
+        run: mv app/build/outputs/apk/release/*.apk app/build/outputs/apk/release/mark-reader-v1.0.7-test.apk
+
+      - name: Publish the test release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: v1.0.7-test
+          name: v1.0.7-test
+          body: |
+            Test build of 1.0.7, signed with a throwaway key generated during this build.
+            It installs for testing, but it cannot update an install that was signed with the upstream key.
+          files: app/build/outputs/apk/release/mark-reader-v1.0.7-test.apk
+          prerelease: true
