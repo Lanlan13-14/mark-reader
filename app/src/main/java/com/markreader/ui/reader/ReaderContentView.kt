@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -99,7 +98,7 @@ fun RenderedTextView(
     // only ever read to restore a position, so it is read without snapshot
     // observation below.
     savedScrollY: State<Int>,
-    search: State<ReaderSearch> = mutableStateOf(ReaderSearch(null, 0, SearchPalette(0, 0, 0))),
+    search: State<ReaderSearch> = NO_SEARCH,
     scrollToOffset: Int?,
     onScrollChanged: (scrollY: Int, maxScrollY: Int) -> Unit,
     onScrollExtentChanged: (maxScrollY: Int) -> Unit,
@@ -712,6 +711,12 @@ private fun leaveWindow(scrollView: android.widget.ScrollView, controller: Reade
     controller.lastTextHash = 0
     controller.lastTextRef = null
 }
+
+/** No query. A constant, so the default does not allocate a new state on every recomposition. */
+private val NO_SEARCH: State<ReaderSearch> =
+    object : State<ReaderSearch> {
+        override val value = ReaderSearch(null, 0, SearchPalette(0, 0, 0))
+    }
 
 /** A search as the reader consumes it: the positions, the current one, and its colours. */
 class ReaderSearch(
