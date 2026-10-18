@@ -30,10 +30,14 @@ jobs:
       - name: Run unit tests
         run: ./gradlew test
 
+      # A fork has no release keystore. Sign when the secrets are present, and
+      # otherwise publish the unsigned APK so the build can still be installed
+      # for testing. The upstream workflow always signs.
       - name: Decode keystore
+        if: ${{ secrets.KEYSTORE_FILE != '' }}
         run: echo "${{ secrets.KEYSTORE_FILE }}" | base64 -d > keystore.jks
 
-      - name: Build signed release APK
+      - name: Build release APK
         run: ./gradlew assembleRelease
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/keystore.jks

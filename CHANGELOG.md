@@ -3,7 +3,7 @@
 All notable changes to MarkReader are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [1.0.7] - 2026-10-18
 
 ### Improved
 - Large Markdown documents now stay responsive while scrolling. A document of more than a few dozen kilobytes used to be laid out and drawn in full by one text view, so opening or scrolling a file of a few hundred kilobytes stalled the reader. It is now split into chunks and only the chunks near the viewport are laid out; the rest of the document keeps its place in the scroll range without being drawn.
