@@ -607,7 +607,7 @@ fun RenderedTextView(
                     controller.pendingAnchorOffset = null
                     controller.lastRestoredKey = restoreKey
                     scrollView.post {
-                        val y = controller.windowHost?.scrollYFor(targetOffset)
+                        val y = controller.windowHost?.approximateScrollY(targetOffset)
                             ?: resolveScrollY(scrollView, controller.splitBoundaries, targetOffset)
                         // Unresolvable anchor — hold position rather than jumping.
                         if (y != null) scrollView.smoothScrollTo(0, y)
