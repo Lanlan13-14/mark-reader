@@ -714,7 +714,7 @@ private fun leaveWindow(scrollView: android.widget.ScrollView, controller: Reade
 }
 
 /** A search as the reader consumes it: the positions, the current one, and its colours. */
-internal class ReaderSearch(
+class ReaderSearch(
     val matches: SearchMatches?,
     val index: Int,
     val palette: SearchPalette
