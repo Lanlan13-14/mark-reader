@@ -765,6 +765,9 @@ private fun scrollToWindowOffset(
 
 private const val MAX_JUMP_REFINEMENTS = 6
 
+/** Puts the target a third of the way down the screen instead of under the top bar. */
+private const val JUMP_VIEWPORT_DIVISOR = 3
+
 /** Repaints when the query or the current match changed, and not on every scroll frame. */
 private fun paintSearch(
     host: WindowedReaderHost,
