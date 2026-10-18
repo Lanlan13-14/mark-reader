@@ -114,12 +114,10 @@ class ReadingWindowTest {
         assertEquals(3, matches.count)
         val middle = matches.within(start = 4, end = 15)
 
-        // "one two one two one": the window [4, 15) holds the second and third "one".
-        assertEquals(4, middle.size)
+        // "one two one two one": the window [4, 15) holds only the second "one", at 8.
+        assertEquals(2, middle.size)
         assertEquals(4, middle[0])
         assertEquals(7, middle[1])
-        assertEquals(12, middle[2])
-        assertEquals(15, middle[3])
     }
 
     @Test

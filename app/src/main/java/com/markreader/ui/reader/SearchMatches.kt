@@ -87,18 +87,15 @@ class SearchMatches internal constructor(val query: String, private val ranges: 
     /** The matches overlapping [start, end), as pairs of offsets local to [start]. */
     fun within(start: Int, end: Int): IntArray {
         if (count == 0 || end <= start) return EMPTY
-        var first = 0
-        while (first < count && ranges[first * 2 + 1] <= start) first++
-        var last = first
-        while (last < count && ranges[last * 2] < end) last++
-        if (first == last) return EMPTY
-        val local = IntArray((last - first) * 2)
-        for (index in first until last) {
-            val slot = (index - first) * 2
-            local[slot] = (ranges[index * 2] - start).coerceAtLeast(0)
-            local[slot + 1] = (ranges[index * 2 + 1] - start).coerceAtMost(end - start)
+        val found = ArrayList<Int>()
+        for (index in 0 until count) {
+            val matchStart = ranges[index * 2]
+            val matchEnd = ranges[index * 2 + 1]
+            if (matchEnd <= start || matchStart >= end) continue
+            found.add((matchStart - start).coerceAtLeast(0))
+            found.add((matchEnd - start).coerceAtMost(end - start))
         }
-        return local
+        return found.toIntArray()
     }
 
     companion object {
