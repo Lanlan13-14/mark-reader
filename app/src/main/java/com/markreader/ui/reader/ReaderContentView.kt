@@ -628,7 +628,10 @@ fun RenderedTextView(
                     if (host == null) {
                         scrollView.post {
                             val y = resolveScrollY(scrollView, controller.splitBoundaries, scrollToOffset)
-                            if (y != null) scrollView.smoothScrollTo(0, (y - scrollView.height / 3).coerceAtLeast(0))
+                            if (y != null) {
+                                val centered = (y - scrollView.height / JUMP_VIEWPORT_DIVISOR).coerceAtLeast(0)
+                                scrollView.smoothScrollTo(0, centered)
+                            }
                             onScrollConsumed()
                         }
                     } else {
@@ -750,7 +753,7 @@ private fun scrollToWindowOffset(
 ) {
     val exact = host.exactScrollY(offset)
     val destination = exact ?: host.approximateScrollY(offset)
-    val centered = (destination - scrollView.height / 3).coerceAtLeast(0)
+    val centered = (destination - scrollView.height / JUMP_VIEWPORT_DIVISOR).coerceAtLeast(0)
     scrollView.smoothScrollTo(0, centered)
     if (exact != null || host.refineAttempts >= MAX_JUMP_REFINEMENTS) {
         host.refineAttempts = 0
