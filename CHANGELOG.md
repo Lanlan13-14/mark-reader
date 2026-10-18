@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- Jumping to a heading or a search match in a large document now lands on it. The position was estimated as if every chunk had the same height, so a heading near the end opened in the middle of the document and a search match was scrolled to a place that did not contain it. The jump is now calibrated from the heights already measured and corrected to the exact line once the target is on screen.
+- Search matches in a large document are highlighted again. The highlight was skipped because a chunk did not keep the text it was built from.
+
+### Fixed
 - Searching a large document no longer copies the whole document to mark each match, which stalled a search in a file of a few hundred kilobytes. Matches are recorded as positions and only the part on screen is highlighted.
 - Jumping to a heading in a large document no longer rebuilds the whole page, which could hang the reader.
 
