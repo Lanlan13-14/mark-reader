@@ -7,7 +7,7 @@ import android.text.style.StyleSpan
 import android.graphics.Typeface
 
 /** Colours of one search hit, passive for the rest and strong for the one being visited. */
-internal class SearchPalette(
+class SearchPalette(
     val passive: Int,
     val active: Int,
     val activeText: Int
