@@ -357,15 +357,8 @@ fun RenderedTextView(
                         )
                     ))
                     host.sync(scrollView.scrollY, scrollView.height, contentTopPx)
-                    if (controller.paintedSearch !== searchMatches ||
-                        controller.paintedSearchIndex != searchMatchIndex
-                    ) {
-                        host.applySearch(searchMatches, searchMatchIndex, searchPalette)
-                        controller.paintedSearch = searchMatches
-                        controller.paintedSearchIndex = searchMatchIndex
-                    }
+                    paintSearch(host, controller, searchMatches, searchMatchIndex, searchPalette)
                     controller.lastTextRef = text
-                    controller.paintedSearch = null
                     controller.lastStyleKey = contentKey
                     controller.lastTextColor = textColor
                     controller.lastSelectionHighlightColor = selectionHighlightColor
@@ -703,4 +696,18 @@ fun RenderedTextView(
             }
         )
     }
+}
+
+/** Repaints when the query or the current match changed, and not on every scroll frame. */
+private fun paintSearch(
+    host: WindowedReaderHost,
+    controller: ReaderContentController,
+    matches: SearchMatches?,
+    index: Int,
+    palette: SearchPalette
+) {
+    if (controller.paintedSearch === matches && controller.paintedSearchIndex == index) return
+    host.applySearch(matches, index, palette)
+    controller.paintedSearch = matches
+    controller.paintedSearchIndex = index
 }
