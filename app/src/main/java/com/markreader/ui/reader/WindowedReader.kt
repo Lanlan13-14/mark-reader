@@ -45,26 +45,6 @@ internal data class ChunkStyle(
     val typography: ChunkTypography
 )
 
-/** Content height, measured where a chunk has been laid out and estimated elsewhere. */
-private fun WindowedReaderHost.chunkIndex(offset: Int): Int {
-    val found = chunks.indexOfFirst { offset >= it.start && offset < it.end }
-    return if (found >= 0) found else chunks.lastIndex
-}
-
-/** Measured pixels per character, falling back to the initial estimate. */
-private fun WindowedReaderHost.pixelsPerChar(): Float {
-    var pixels = 0
-    var chars = 0
-    for (chunk in chunks) {
-        if (chunk.measuredHeight <= 0) continue
-        pixels += chunk.measuredHeight
-        chars += chunk.end - chunk.start
-    }
-    if (chars > 0) return pixels.toFloat() / chars
-    val sample = chunks.firstOrNull()?.let { it.end - it.start } ?: ReadingWindow.TARGET_CHUNK_CHARS
-    return averageHeight.toFloat() / sample.coerceAtLeast(1)
-}
-
 internal fun WindowedReaderHost.totalHeight(): Int = ReadingWindow.totalHeight(measuredHeights())
 
 /** The last heading in [chunk] whose line starts at or above [top] and below [limit]. */
@@ -310,6 +290,27 @@ internal class WindowedReaderHost(
         }
         return chunks.lastOrNull()?.start
     }
+
+    /** Content height, measured where a chunk has been laid out and estimated elsewhere. */
+    private fun chunkIndex(offset: Int): Int {
+        val found = chunks.indexOfFirst { offset >= it.start && offset < it.end }
+        return if (found >= 0) found else chunks.lastIndex
+    }
+
+    /** Measured pixels per character, falling back to the initial estimate. */
+    private fun pixelsPerChar(): Float {
+        var pixels = 0
+        var chars = 0
+        for (chunk in chunks) {
+            if (chunk.measuredHeight <= 0) continue
+            pixels += chunk.measuredHeight
+            chars += chunk.end - chunk.start
+        }
+        if (chars > 0) return pixels.toFloat() / chars
+        val sample = chunks.firstOrNull()?.let { it.end - it.start } ?: ReadingWindow.TARGET_CHUNK_CHARS
+        return averageHeight.toFloat() / sample.coerceAtLeast(1)
+    }
+
 
     /** Index of the last heading whose line starts above [scrollY], across mounted chunks. */
     fun activeHeading(headings: List<HeadingItem>, scrollY: Int): Int {
