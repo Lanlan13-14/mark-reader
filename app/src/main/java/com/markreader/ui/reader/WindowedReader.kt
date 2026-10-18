@@ -94,6 +94,9 @@ internal class WindowedReaderHost(
     }
 
     private var chunks: MutableList<Chunk> = mutableListOf()
+    private var search: SearchMatches? = null
+    private var searchIndex = -1
+    private var searchPalette = SearchPalette(0, 0, 0)
     private var source: Spanned? = null
     private var style: ChunkStyle? = null
     private var mounted = IntRange.EMPTY
@@ -148,19 +151,14 @@ internal class WindowedReaderHost(
         }
     }
 
-    /** The text changed but its characters did not: push the new spans into mounted chunks. */
-    private fun refill(text: Spanned) {
-        val current = style ?: return
-        for ((index, chunk) in chunks.withIndex()) {
-            val slice = text.subSequence(chunk.start, chunk.end) as Spanned
-            chunks[index] = Chunk(chunk.start, chunk.end, slice).also {
-                it.view = chunk.view
-                it.measuredHeight = chunk.measuredHeight
-            }
-            val view = chunk.view ?: continue
-            if (view is ChunkBody) {
-                view.bind(slice, current)
-            }
+    /** Paints [matches] on the mounted chunks. Chunks off screen get them when they mount. */
+    fun applySearch(matches: SearchMatches?, activeIndex: Int, palette: SearchPalette) {
+        search = matches
+        searchIndex = activeIndex
+        searchPalette = palette
+        for (chunk in chunks) {
+            val body = chunk.view as? ChunkBody ?: continue
+            body.showSearch(matches, activeIndex, chunk.start, chunk.end, palette)
         }
     }
 
@@ -207,6 +205,7 @@ internal class WindowedReaderHost(
             if (shouldMount && chunk.view == null) {
                 val body = ChunkBody(container.context, current)
                 body.bind(chunk.text, current)
+                body.showSearch(search, searchIndex, chunk.start, chunk.end, searchPalette)
                 chunk.view = body
                 container.removeViewAt(index)
                 container.addView(body, index, chunkLayout())
@@ -254,7 +253,7 @@ internal class WindowedReaderHost(
         val resolved = if (index < 0 || current == null) {
             null
         } else {
-            scrollYInChunk(index, offset, current)
+            scrollYInChunk(index, offset)
         }
         return resolved
     }
@@ -315,8 +314,36 @@ internal class WindowedReaderHost(
  * The view for one chunk: its own segments for code blocks and tables, exactly as the
  * single-view reader splits them, only bounded to this chunk's text.
  */
+/** Paints the matches that fall inside this chunk, replacing the previous highlight. */
+internal fun ChunkBody.showSearch(
+    matches: SearchMatches?,
+    activeIndex: Int,
+    chunkStart: Int,
+    chunkEnd: Int,
+    palette: SearchPalette
+) {
+    if (plain.size != childCount) return
+    val positions = matches?.within(chunkStart, chunkEnd) ?: IntArray(0)
+    val activeStart = if (matches != null && activeIndex in 0 until matches.count) {
+        matches.startAt(activeIndex) - chunkStart
+    } else {
+        -1
+    }
+    var origin = 0
+    for (index in 0 until childCount) {
+        val view = extractTextView(getChildAt(index)) ?: continue
+        val length = plain[index].length
+        view.text = highlightedSlice(
+            plain[index], matchesIn(positions, origin, origin + length), activeStart - origin, palette
+        )
+        origin += length
+    }
+}
+
+
 private class ChunkBody(context: Context, style: ChunkStyle) : LinearLayout(context) {
     private var builtForWrap = style.typography.isCodeBlockWrapEnabled
+    internal var plain: List<CharSequence> = emptyList()
 
     init {
         orientation = VERTICAL

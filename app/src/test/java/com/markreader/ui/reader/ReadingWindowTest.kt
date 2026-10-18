@@ -97,6 +97,29 @@ class ReadingWindowTest {
     }
 
     @Test
+    fun `a search records positions without copying the document`() {
+        val text = "Alpha beta ALPHA tail"
+        val matches = SearchMatches.find(text, "alpha")
+
+        assertEquals(2, matches.count)
+        assertEquals(0, matches.startAt(0))
+        assertEquals(11, matches.startAt(1))
+    }
+
+    @Test
+    fun `a search over a chunk returns only the matches inside it`() {
+        val text = "one two one two one"
+        val matches = SearchMatches.find(text, "one")
+
+        assertEquals(3, matches.count)
+        val middle = matches.within(start = 4, end = 15)
+
+        assertEquals(4, middle.size)
+        assertEquals(0, middle[0])
+        assertEquals(3, middle[1])
+    }
+
+    @Test
     fun `offsets reconstruct the scroll position of every chunk`() {
         val heights = intArrayOf(100, 250, 400)
 

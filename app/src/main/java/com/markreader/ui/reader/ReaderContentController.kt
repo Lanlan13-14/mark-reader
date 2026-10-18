@@ -88,6 +88,12 @@ internal class ReaderContentController(
     /** Chrome inset in dp, read by the scroll listener which has no Compose state of its own. */
     var contentTopInsetDp: Float = 0f
 
+    /** The query currently painted. Compared by identity so a repeat search is not repainted. */
+    var paintedSearch: com.markreader.ui.reader.SearchMatches? = null
+
+    /** Index of the match drawn as the current one. */
+    var paintedSearchIndex: Int = -1
+
     /**
      * The global-layout listener reporting scroll extent, held so it can be
      * detached when the view tree is released rather than outliving it.

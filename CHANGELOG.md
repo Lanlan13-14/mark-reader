@@ -3,6 +3,12 @@
 All notable changes to MarkReader are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Fixed
+- Searching a large document no longer copies the whole document to mark each match, which stalled a search in a file of a few hundred kilobytes. Matches are recorded as positions and only the part on screen is highlighted.
+- Jumping to a heading in a large document no longer rebuilds the whole page, which could hang the reader.
+
 ## [1.0.7] - 2026-10-18
 
 ### Improved

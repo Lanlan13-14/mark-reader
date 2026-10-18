@@ -112,7 +112,10 @@ fun RenderedTextView(
     codeFont: CodeFontPreference = CodeFontPreference.JetBrainsMono,
     isMonospaced: Boolean = false,
     textAlignment: TextAlignmentPreference,
-    codeBlockBackgroundColor: Int
+    codeBlockBackgroundColor: Int,
+    searchMatches: SearchMatches? = null,
+    searchMatchIndex: Int = 0,
+    searchPalette: SearchPalette = SearchPalette(0, 0, 0)
 ) {
     // A long rendered document is read through a window: only the chunks near the viewport are
     // real views, and the rest are spacers. Short documents, raw text and the editor preview
@@ -354,7 +357,15 @@ fun RenderedTextView(
                         )
                     ))
                     host.sync(scrollView.scrollY, scrollView.height, contentTopPx)
+                    if (controller.paintedSearch !== searchMatches ||
+                        controller.paintedSearchIndex != searchMatchIndex
+                    ) {
+                        host.applySearch(searchMatches, searchMatchIndex, searchPalette)
+                        controller.paintedSearch = searchMatches
+                        controller.paintedSearchIndex = searchMatchIndex
+                    }
                     controller.lastTextRef = text
+                    controller.paintedSearch = null
                     controller.lastStyleKey = contentKey
                     controller.lastTextColor = textColor
                     controller.lastSelectionHighlightColor = selectionHighlightColor
