@@ -45,7 +45,6 @@ internal data class ChunkStyle(
     val typography: ChunkTypography
 )
 
-/** Content height, measured where a chunk has been laid out and estimated elsewhere. */
 internal fun WindowedReaderHost.totalHeight(): Int = ReadingWindow.totalHeight(measuredHeights())
 
 /** The last heading in [chunk] whose line starts at or above [top] and below [limit]. */
@@ -101,6 +100,9 @@ internal class WindowedReaderHost(
     private var style: ChunkStyle? = null
     private var mounted = IntRange.EMPTY
     private var averageHeight = 0
+
+    /** How many times the current jump has been refined toward its exact line. */
+    var refineAttempts = 0
     private var layoutPending = false
 
     /**
@@ -245,30 +247,30 @@ internal class WindowedReaderHost(
      * the chunk that contains it first. Returns null until that chunk has been laid out, which
      * tells the caller to ask again rather than guess.
      */
-    fun scrollYFor(offset: Int): Int? {
-        val index = chunks.indexOfFirst { offset >= it.start && offset < it.end }
-            .takeIf { it >= 0 } ?: chunks.lastIndex
-        val current = style
-        val resolved = if (index < 0 || current == null) {
-            null
-        } else {
-            scrollYInChunk(index, offset)
-        }
-        return resolved
+    /** The line position of [offset], or null until the chunk that holds it has been laid out. */
+    fun exactScrollY(offset: Int): Int? {
+        val index = chunkIndex(offset)
+        if (index < 0) return null
+        val lines = chunks[index].view?.let { segmentPlacement(it).lines } ?: return null
+        if (lines.textLength == 0) return null
+        val local = (offset - chunks[index].start).coerceIn(0, lines.textLength - 1)
+        val base = ReadingWindow.offsetOf(measuredHeights(), index)
+        return base + lines.getLineTop(lines.getLineForOffset(local))
     }
 
-    /** Line position of [offset] inside chunk [index], estimated when the chunk is not mounted. */
-    private fun scrollYInChunk(index: Int, offset: Int): Int {
+    /**
+     * A position close to [offset], used to bring its chunk on screen so [exactScrollY] can take
+     * over. Calibrated from chunks that have been measured, so it follows this document's real
+     * density instead of assuming every chunk is the same height.
+     */
+    fun approximateScrollY(offset: Int): Int {
+        val index = chunkIndex(offset)
+        if (index < 0) return 0
         val chunk = chunks[index]
         val base = ReadingWindow.offsetOf(measuredHeights(), index)
-        val lines = chunk.view?.let { segmentPlacement(it).lines }
-        if (lines != null && lines.textLength > 0) {
-            val local = (offset - chunk.start).coerceIn(0, lines.textLength - 1)
-            return base + lines.getLineTop(lines.getLineForOffset(local))
-        }
-        val height = chunk.measuredHeight.takeIf { it > 0 } ?: averageHeight
         val span = (chunk.end - chunk.start).coerceAtLeast(1)
         val local = (offset - chunk.start).coerceIn(0, span - 1)
+        val height = chunk.measuredHeight.takeIf { it > 0 } ?: (span * pixelsPerChar()).toInt()
         return base + height * local / span
     }
 
@@ -288,6 +290,27 @@ internal class WindowedReaderHost(
         }
         return chunks.lastOrNull()?.start
     }
+
+    /** Content height, measured where a chunk has been laid out and estimated elsewhere. */
+    private fun chunkIndex(offset: Int): Int {
+        val found = chunks.indexOfFirst { offset >= it.start && offset < it.end }
+        return if (found >= 0) found else chunks.lastIndex
+    }
+
+    /** Measured pixels per character, falling back to the initial estimate. */
+    private fun pixelsPerChar(): Float {
+        var pixels = 0
+        var chars = 0
+        for (chunk in chunks) {
+            if (chunk.measuredHeight <= 0) continue
+            pixels += chunk.measuredHeight
+            chars += chunk.end - chunk.start
+        }
+        if (chars > 0) return pixels.toFloat() / chars
+        val sample = chunks.firstOrNull()?.let { it.end - it.start } ?: ReadingWindow.TARGET_CHUNK_CHARS
+        return averageHeight.toFloat() / sample.coerceAtLeast(1)
+    }
+
 
     /** Index of the last heading whose line starts above [scrollY], across mounted chunks. */
     fun activeHeading(headings: List<HeadingItem>, scrollY: Int): Int {
@@ -355,6 +378,7 @@ internal class ChunkBody(context: Context, style: ChunkStyle) : LinearLayout(con
                 splitCode = !style.typography.isCodeBlockWrapEnabled,
                 splitTables = true
             )
+            plain = segments.map { (start, end, _) -> text.subSequence(start, end).toString() }
             for ((start, end, type) in segments) {
                 addView(segmentView(text.subSequence(start, end) as Spanned, type, style), matchWrap())
             }

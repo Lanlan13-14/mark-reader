@@ -107,6 +107,17 @@ class ReadingWindowTest {
     }
 
     @Test
+    fun `measured density puts a late offset near the end of the document`() {
+        // A heading near the end of a dense document must not land in the middle of it. The
+        // estimate uses the measured pixels per character, not a flat height per chunk.
+        val heights = intArrayOf(2000, 2000, 2000, 2000)
+        val end = ReadingWindow.totalHeight(heights)
+
+        assertEquals(8000, end)
+        assertTrue(ReadingWindow.offsetOf(heights, 3) > end * 2 / 3)
+    }
+
+    @Test
     fun `a search over a chunk returns only the matches inside it`() {
         val text = "one two one two one"
         val matches = SearchMatches.find(text, "one")

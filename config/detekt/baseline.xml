@@ -73,6 +73,7 @@
     <ID>TooManyFunctions:ScrollAnchor.kt$com.markreader.ui.reader.ScrollAnchor.kt</ID>
     <ID>TooManyFunctions:SettingsScreen.kt$com.markreader.ui.screens.SettingsScreen.kt</ID>
     <ID>TooManyFunctions:ViewerViewModel.kt$ViewerViewModel : AndroidViewModel</ID>
+    <ID>TooManyFunctions:WindowedReader.kt$WindowedReaderHost</ID>
     <ID>TopLevelPropertyNaming:SettingsScreen.kt$private const val GithubRepoUrl = "https://github.com/usamaiqb/mark-reader"</ID>
     <ID>ViewModelForwarding:EditorScreen.kt$FormattingToolbar(viewModel = viewModel)</ID>
     <ID>ViewModelInjection:ViewerScreen.kt$viewModel</ID>
