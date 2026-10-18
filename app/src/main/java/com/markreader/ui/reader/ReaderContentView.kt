@@ -335,42 +335,23 @@ fun RenderedTextView(
                 if (scrollView.getChildAt(0) == null) return@AndroidView
 
                 if (windowed && text is Spanned) {
-                    val host = controller.windowHost ?: WindowedReaderHost(
-                        scrollView.context, scrollView, paddingPx
-                    ).also { created ->
-                        controller.windowHost = created
-                        scrollView.removeAllViews()
-                        scrollView.addView(
-                            created.container,
-                            ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.WRAP_CONTENT
+                    updateWindow(
+                        scrollView, controller, text,
+                        chunkStyleOf(
+                            ChunkColors(textColor, selectionHighlightColor, codeBlockBackgroundColor),
+                            ChunkTypography(
+                                fontSizeSp, lineHeight, readingFont, codeFont, isMonospaced,
+                                textAlignment, isCodeBlockWrapEnabled, density
                             )
+                        ),
+                        contentKey,
+                        SearchPaint(
+                            searchMatches, searchMatchIndex, searchPalette,
+                            contentTopInset.value, contentTopPx, paddingPx
                         )
-                    }
-                    controller.contentTopInsetDp = contentTopInset.value
-                    host.setText(text, chunkStyleOf(
-                        ChunkColors(textColor, selectionHighlightColor, codeBlockBackgroundColor),
-                        ChunkTypography(
-                            fontSizeSp, lineHeight, readingFont, codeFont, isMonospaced,
-                            textAlignment, isCodeBlockWrapEnabled, density
-                        )
-                    ))
-                    host.sync(scrollView.scrollY, scrollView.height, contentTopPx)
-                    paintSearch(host, controller, searchMatches, searchMatchIndex, searchPalette)
-                    controller.lastTextRef = text
-                    controller.lastStyleKey = contentKey
-                    controller.lastTextColor = textColor
-                    controller.lastSelectionHighlightColor = selectionHighlightColor
-                    controller.lastCodeBlockBackgroundColor = codeBlockBackgroundColor
+                    )
                 } else if (controller.windowHost != null) {
-                    // The document shrank below the window threshold, or the view switched to raw
-                    // text. Remember where the reader was, then let the branch below rebuild.
-                    controller.pendingAnchorOffset = controller.windowHost?.anchorAt(scrollView.scrollY)
-                    controller.windowHost = null
-                    scrollView.removeAllViews()
-                    controller.lastTextHash = 0
-                    controller.lastTextRef = null
+                    leaveWindow(scrollView, controller)
                 }
 
                 val resolvedChild = scrollView.getChildAt(0)
@@ -697,6 +678,56 @@ fun RenderedTextView(
         )
     }
 }
+
+
+private fun updateWindow(
+    scrollView: android.widget.ScrollView,
+    controller: ReaderContentController,
+    text: android.text.Spanned,
+    style: ChunkStyle,
+    contentKey: ContentKey,
+    search: SearchPaint
+) {
+    val host = controller.windowHost ?: WindowedReaderHost(
+        scrollView.context, scrollView, search.paddingPx
+    ).also { created ->
+        controller.windowHost = created
+        scrollView.removeAllViews()
+        scrollView.addView(created.container, matchParentWrap())
+    }
+    controller.contentTopInsetDp = search.contentTopInsetDp
+    host.setText(text, style)
+    host.sync(scrollView.scrollY, scrollView.height, search.contentTopPx)
+    paintSearch(host, controller, search.matches, search.index, search.palette)
+    controller.lastTextRef = text
+    controller.lastStyleKey = contentKey
+    controller.lastTextColor = style.colors.text
+    controller.lastSelectionHighlightColor = style.colors.selection
+    controller.lastCodeBlockBackgroundColor = style.colors.codeBackground
+}
+
+private fun leaveWindow(scrollView: android.widget.ScrollView, controller: ReaderContentController) {
+    controller.pendingAnchorOffset = controller.windowHost?.anchorAt(scrollView.scrollY)
+    controller.windowHost = null
+    scrollView.removeAllViews()
+    controller.lastTextHash = 0
+    controller.lastTextRef = null
+}
+
+/** The search and the two insets the window needs, grouped so the call stays short. */
+private class SearchPaint(
+    val matches: SearchMatches?,
+    val index: Int,
+    val palette: SearchPalette,
+    val contentTopInsetDp: Float,
+    val contentTopPx: Int,
+    val paddingPx: Int
+)
+
+private fun matchParentWrap() = android.view.ViewGroup.LayoutParams(
+    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+)
 
 /** Repaints when the query or the current match changed, and not on every scroll frame. */
 private fun paintSearch(
