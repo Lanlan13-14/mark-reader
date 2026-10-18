@@ -1,0 +1,108 @@
+package com.markreader.ui.reader
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * The window is what keeps a large document from being laid out all at once, so the cases here
+ * pin the properties that make that true: short documents are not split, long ones are split
+ * into bounded pieces, no piece is empty, and the pieces cover the text exactly once.
+ */
+class ReadingWindowTest {
+
+    /** Paragraphs of [words] words, separated by blank lines, repeated [times] times. */
+    private fun document(times: Int, words: Int = 40): String {
+        val paragraph = (1..words).joinToString(" ") { "word$it" }
+        return (1..times).joinToString("\n\n") { paragraph }
+    }
+
+    @Test
+    fun `a short document stays one chunk`() {
+        val text = document(times = 3)
+
+        assertTrue(text.length < ReadingWindow.WINDOW_THRESHOLD_CHARS)
+        assertEquals(listOf(0 until text.length), ReadingWindow.chunkRanges(text))
+    }
+
+    @Test
+    fun `an empty document is one empty chunk`() {
+        assertEquals(listOf(IntRange.EMPTY), ReadingWindow.chunkRanges(""))
+    }
+
+    @Test
+    fun `a long document is split into bounded chunks on paragraph boundaries`() {
+        val text = document(times = 400)
+        assertTrue(text.length > ReadingWindow.WINDOW_THRESHOLD_CHARS)
+
+        val ranges = ReadingWindow.chunkRanges(text)
+
+        assertTrue("expected several chunks, got ${ranges.size}", ranges.size > 1)
+        assertEquals(0, ranges.first().first)
+        assertEquals(text.length, ranges.last().last + 1)
+        ranges.zipWithNext().forEach { (previous, next) ->
+            assertEquals(previous.last + 1, next.first)
+        }
+        ranges.forEach { range ->
+            assertTrue(range.last >= range.first)
+            assertTrue(
+                "chunk of ${range.last - range.first + 1} chars exceeds the cap",
+                range.last - range.first + 1 <= ReadingWindow.MAX_CHUNK_CHARS
+            )
+        }
+    }
+
+    @Test
+    fun `a chunk never ends in the middle of a paragraph`() {
+        val text = document(times = 400)
+        val ranges = ReadingWindow.chunkRanges(text)
+
+        // Every chunk but the last ends where a paragraph ended, i.e. right after a blank line.
+        ranges.dropLast(1).forEach { range ->
+            val end = range.last + 1
+            assertEquals('\n', text[end - 1])
+            assertEquals('\n', text[end - 2])
+        }
+    }
+
+    @Test
+    fun `one enormous paragraph is still cut into bounded chunks`() {
+        val text = "word ".repeat(20_000)
+        val ranges = ReadingWindow.chunkRanges(text)
+
+        assertTrue(ranges.size > 1)
+        assertEquals(text.length, ranges.sumOf { it.last - it.first + 1 })
+        ranges.forEach { range ->
+            assertTrue(range.last - range.first + 1 <= ReadingWindow.MAX_CHUNK_CHARS)
+        }
+    }
+
+    @Test
+    fun `the visible window covers the viewport plus a buffer and nothing else`() {
+        val heights = IntArray(20) { 1_000 }
+
+        val range = ReadingWindow.visibleRange(heights, scrollY = 5_000, viewportHeight = 2_000)
+
+        // Chunks 5 and 6 overlap the viewport; the buffer mounts two more on each side.
+        assertEquals(3, range.first)
+        assertEquals(8, range.last)
+    }
+
+    @Test
+    fun `the visible window clamps at both ends of the document`() {
+        val heights = IntArray(6) { 1_000 }
+
+        assertEquals(0, ReadingWindow.visibleRange(heights, scrollY = 0, viewportHeight = 500).first)
+        assertEquals(5, ReadingWindow.visibleRange(heights, scrollY = 9_000, viewportHeight = 500).last)
+    }
+
+    @Test
+    fun `offsets reconstruct the scroll position of every chunk`() {
+        val heights = intArrayOf(100, 250, 400)
+
+        assertEquals(0, ReadingWindow.offsetOf(heights, 0))
+        assertEquals(100, ReadingWindow.offsetOf(heights, 1))
+        assertEquals(350, ReadingWindow.offsetOf(heights, 2))
+        assertEquals(750, ReadingWindow.totalHeight(heights))
+    }
+}

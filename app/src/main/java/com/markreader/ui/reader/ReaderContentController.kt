@@ -80,6 +80,15 @@ internal class ReaderContentController(
     var splitBoundaries: List<Segment> = emptyList()
 
     /**
+     * Set while the document is large enough to be read through a window. The scroll listener
+     * and the update pass both touch it, and both run on the main thread.
+     */
+    var windowHost: WindowedReaderHost? = null
+
+    /** Chrome inset in dp, read by the scroll listener which has no Compose state of its own. */
+    var contentTopInsetDp: Float = 0f
+
+    /**
      * The global-layout listener reporting scroll extent, held so it can be
      * detached when the view tree is released rather than outliving it.
      */

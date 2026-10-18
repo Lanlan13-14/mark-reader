@@ -11,6 +11,9 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TableLayout
 import android.widget.TextView
+import com.markreader.data.CodeFontPreference
+import com.markreader.data.ReadingFontPreference
+import com.markreader.data.TextAlignmentPreference
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,9 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.markreader.data.CodeFontPreference
-import com.markreader.data.ReadingFontPreference
-import com.markreader.data.TextAlignmentPreference
 import com.markreader.format.HeadingItem
 
 /**
@@ -114,6 +114,10 @@ fun RenderedTextView(
     textAlignment: TextAlignmentPreference,
     codeBlockBackgroundColor: Int
 ) {
+    // A long rendered document is read through a window: only the chunks near the viewport are
+    // real views, and the rest are spacers. Short documents, raw text and the editor preview
+    // stay on the single TextView, which is cheaper when there is nothing to window.
+    val windowed = text is Spanned && text.length > ReadingWindow.WINDOW_THRESHOLD_CHARS
     val contentKey = remember(text, fontSizeSp, lineHeight, readingFont, codeFont, isMonospaced, textAlignment) {
         ContentKey(
             textHash = text.hashCode(),
@@ -195,10 +199,23 @@ fun RenderedTextView(
                         )
                     }
                     setOnScrollChangeListener { _, _, scrollY, _, _ ->
-                        onScrollChanged(scrollY, computeMaxScrollY(this))
+                        val host = controller.windowHost
+                        if (host != null) {
+                            val density = resources.displayMetrics.density
+                            val contentTopPx = (16 * density).toInt() +
+                                (controller.contentTopInsetDp * density).toInt()
+                            host.sync(scrollY, height, contentTopPx)
+                            onScrollChanged(scrollY, host.totalHeight().coerceAtLeast(computeMaxScrollY(this)))
+                        } else {
+                            onScrollChanged(scrollY, computeMaxScrollY(this))
+                        }
                         val list = currentHeadings
                         if (list.isEmpty()) return@setOnScrollChangeListener
                         val firstChild = getChildAt(0) ?: return@setOnScrollChangeListener
+                        if (host != null) {
+                            onActiveHeadingChangedState(host.activeHeading(list, scrollY))
+                            return@setOnScrollChangeListener
+                        }
                         if (firstChild is LinearLayout) {
                             onActiveHeadingChangedState(
                                 findActiveHeadingInSplit(
@@ -312,11 +329,52 @@ fun RenderedTextView(
                 }
 
                 // Text / style updates
-                val currentChild = scrollView.getChildAt(0) ?: return@AndroidView
+                if (scrollView.getChildAt(0) == null) return@AndroidView
 
-                if (currentChild is LinearLayout) {
+                if (windowed && text is Spanned) {
+                    val host = controller.windowHost ?: WindowedReaderHost(
+                        scrollView.context, scrollView, paddingPx
+                    ).also { created ->
+                        controller.windowHost = created
+                        scrollView.removeAllViews()
+                        scrollView.addView(
+                            created.container,
+                            ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT
+                            )
+                        )
+                    }
+                    controller.contentTopInsetDp = contentTopInset.value
+                    host.setText(text, chunkStyleOf(
+                        ChunkColors(textColor, selectionHighlightColor, codeBlockBackgroundColor),
+                        ChunkTypography(
+                            fontSizeSp, lineHeight, readingFont, codeFont, isMonospaced,
+                            textAlignment, isCodeBlockWrapEnabled, density
+                        )
+                    ))
+                    host.sync(scrollView.scrollY, scrollView.height, contentTopPx)
+                    controller.lastTextRef = text
+                    controller.lastStyleKey = contentKey
+                    controller.lastTextColor = textColor
+                    controller.lastSelectionHighlightColor = selectionHighlightColor
+                    controller.lastCodeBlockBackgroundColor = codeBlockBackgroundColor
+                } else if (controller.windowHost != null) {
+                    // The document shrank below the window threshold, or the view switched to raw
+                    // text. Remember where the reader was, then let the branch below rebuild.
+                    controller.pendingAnchorOffset = controller.windowHost?.anchorAt(scrollView.scrollY)
+                    controller.windowHost = null
+                    scrollView.removeAllViews()
+                    controller.lastTextHash = 0
+                    controller.lastTextRef = null
+                }
+
+                val resolvedChild = scrollView.getChildAt(0)
+                if (controller.windowHost != null || resolvedChild == null) {
+                    // The window owns its children; the branches below build the single view.
+                } else if (resolvedChild is LinearLayout) {
                     // Split mode
-                    val container = currentChild
+                    val container = resolvedChild
                     val spanned = text as Spanned
                     val textRefChanged = spanned !== controller.lastTextRef
                     val textHash = if (textRefChanged || controller.lastTextHash == 0) {
@@ -520,7 +578,7 @@ fun RenderedTextView(
                     }
                 } else {
                     // Single-TV mode
-                    val textView = currentChild as TextView
+                    val textView = resolvedChild as TextView
 
                     when (text) {
                         is Spanned -> {
@@ -566,9 +624,8 @@ fun RenderedTextView(
                     controller.pendingAnchorOffset = null
                     controller.lastRestoredKey = restoreKey
                     scrollView.post {
-                        val y = resolveScrollY(
-                            scrollView, controller.splitBoundaries, targetOffset
-                        )
+                        val y = controller.windowHost?.scrollYFor(targetOffset)
+                            ?: resolveScrollY(scrollView, controller.splitBoundaries, targetOffset)
                         // Unresolvable anchor — hold position rather than jumping.
                         if (y != null) scrollView.smoothScrollTo(0, y)
                     }
@@ -585,15 +642,18 @@ fun RenderedTextView(
                 if (scrollToOffset != null) {
                     controller.lastRestoredKey = restoreKey
                     scrollView.post {
-                        val y = resolveScrollY(
-                            scrollView, controller.splitBoundaries, scrollToOffset
-                        )
+                        val host = controller.windowHost
+                        val y = host?.scrollYFor(scrollToOffset)
+                            ?: resolveScrollY(scrollView, controller.splitBoundaries, scrollToOffset)
+                        if (y == null && host != null) {
+                            // The target chunk was just mounted and has no layout yet. Leave the
+                            // request pending so the next pass, after layout, scrolls to it.
+                            return@post
+                        }
                         if (y != null) {
                             val centeredY = (y - scrollView.height / 3).coerceAtLeast(0)
                             scrollView.smoothScrollTo(0, centeredY)
                         }
-                        // Consumed either way, so an unresolvable target does not
-                        // leave the request pending forever.
                         onScrollConsumed()
                     }
                 }
@@ -624,6 +684,7 @@ fun RenderedTextView(
                 }
             },
             onRelease = { scrollView ->
+                controller.windowHost = null
                 controller.extentListener?.let { listener ->
                     scrollView.viewTreeObserver?.removeOnGlobalLayoutListener(listener)
                     controller.extentListener = null
