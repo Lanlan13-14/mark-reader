@@ -625,6 +625,7 @@ fun RenderedTextView(
                 if (scrollToOffset != null) {
                     controller.lastRestoredKey = restoreKey
                     val host = controller.windowHost
+                    host?.beginJump()
                     if (host == null) {
                         scrollView.post {
                             val y = resolveScrollY(scrollView, controller.splitBoundaries, scrollToOffset)
@@ -770,7 +771,12 @@ private fun scrollToWindowOffset(
 ) {
     val y = host.scrollYFor(deviceOffset) { onEstimated?.invoke() }
     val centered = (y - scrollView.height / JUMP_VIEWPORT_DIVISOR).coerceAtLeast(0)
-    scrollView.smoothScrollTo(0, centered)
+    // An estimate means the target is far away and its chunk is not mounted. Moving there
+    // instantly mounts it on this very frame, so the refinement one frame later reads the
+    // exact line; animating instead would burn the whole refine budget on frames where the
+    // target is still off-screen, and the jump would land on the estimate.
+    if (host.lastAnswerWasEstimate) scrollView.scrollTo(0, centered)
+    else scrollView.smoothScrollTo(0, centered)
     onScrollConsumed()
 }
 
