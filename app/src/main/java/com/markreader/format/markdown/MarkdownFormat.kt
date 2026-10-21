@@ -85,16 +85,21 @@ class MarkdownFormat(private val newRenderer: (isDark: Boolean) -> MarkwonRender
  * without its backticks and would otherwise never be found.
  */
 private fun parseHeadings(markdown: String, renderedText: String?): List<HeadingItem> {
-    if (renderedText.isNullOrEmpty()) return emptyList()
     val headings = mutableListOf<HeadingItem>()
+    var sourceOffset = 0
     var cursor = 0
     markdown.lineSequence().forEach { line ->
+        val lineStart = sourceOffset
+        sourceOffset += line.length + 1
         val heading = markdownHeading(line) ?: return@forEach
-        val needle = stripInlineMarkup(heading.text)
-        val found = when {
-            needle.isEmpty() -> -1
-            else -> renderedText.indexOf(needle, cursor)
+        if (renderedText.isNullOrEmpty()) {
+            // Nothing rendered to map onto: the heading is still a heading, and its source
+            // offset is the only position there is.
+            headings.add(heading.copy(offset = lineStart))
+            return@forEach
         }
+        val needle = stripInlineMarkup(heading.text)
+        val found = if (needle.isEmpty()) -1 else renderedText.indexOf(needle, cursor)
         if (found < 0) return@forEach
         cursor = found + needle.length
         headings.add(heading.copy(offset = found))

@@ -80,10 +80,13 @@ class MarkdownHeadingsTest {
     }
 
     @Test
-    fun `with no rendering to map onto there is nothing to navigate`() {
-        // Without a rendering every offset would be a source offset, which the reader cannot
-        // scroll to. An empty table of contents is honest; wrong offsets are not.
-        assertEquals(emptyList<HeadingItem>(), headings("# One\nbody\n## Two\n", null))
+    fun `with no rendering to map onto, offsets stay in the source`() {
+        // Heading detection does not depend on the rendering; only the mapping does. With no
+        // rendering there is nothing to map to, so the source offset is the only position there
+        // is — and the reader is showing the source in that case too.
+        val result = headings("# One\nbody\n## Two\n", null)
+
+        assertEquals(listOf(0, 11), result.map { it.offset })
     }
 
     /**
