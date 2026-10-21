@@ -137,6 +137,9 @@ internal class WindowedReaderHost(
         internal var cachedPlain: String? = null
         fun plain(): String = cachedPlain ?: text.toString().also { cachedPlain = it }
 
+        /** The estimate this chunk was first given, kept so it never drifts under the user. */
+        internal var frozenEstimate = 0
+
         /** Whether the chunk contains a code fence; computed lazily, once. */
         internal var codeFenceKnown = false
         internal var containsCodeFence = false
@@ -235,7 +238,6 @@ internal class WindowedReaderHost(
         for (index in chunks.indices) {
             val chunk = chunks[index]
             val shouldMount = index in range
-            val existing = container.getChildAt(index)
             if (shouldMount && chunk.view == null) {
                 val body = ChunkBody(container.context, current)
                 body.bind(chunk.text, current)
@@ -247,11 +249,6 @@ internal class WindowedReaderHost(
                 chunk.view = null
                 container.removeViewAt(index)
                 container.addView(spacerView(container.context, heights[index]), index, chunkLayout())
-            } else if (!shouldMount && existing !== null && existing.minimumHeight != heights[index]) {
-                // The estimate improved (more chunks measured): resize spacers still on screen,
-                // so the laid-out content keeps matching the table every position is computed from.
-                existing.minimumHeight = heights[index]
-                existing.requestLayout()
             } else if (shouldMount) {
                 (chunk.view as? ChunkBody)?.restyle(current)
             }
@@ -322,8 +319,22 @@ internal class WindowedReaderHost(
         val perChar = if (chars > 0) pixels.toFloat() / chars else 0f
         val fresh = IntArray(chunks.size) { index ->
             val chunk = chunks[index]
-            chunk.measuredHeight.takeIf { it > 0 }
-                ?: if (perChar > 0f) estimatedHeight(chunk, perChar) else averageHeight
+            if (chunk.measuredHeight > 0) {
+                chunk.measuredHeight
+            } else {
+                // Frozen the first time it is needed. Re-deriving it every pass would make
+                // every unmeasured chunk drift as measurements came in, which changes the
+                // content height under the viewport and makes a computed offset mean
+                // something else than it did a moment ago.
+                if (chunk.frozenEstimate == 0) {
+                    chunk.frozenEstimate = if (perChar > 0f) {
+                        estimatedHeight(chunk, perChar)
+                    } else {
+                        averageHeight
+                    }
+                }
+                chunk.frozenEstimate
+            }
         }
         heightsCache = fresh
         return fresh
