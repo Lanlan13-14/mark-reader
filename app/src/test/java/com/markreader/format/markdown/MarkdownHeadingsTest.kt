@@ -69,19 +69,47 @@ class MarkdownHeadingsTest {
     }
 
     @Test
-    fun `a heading absent from the rendering falls back to a clamped source offset`() {
-        // Markwon dropped the second heading entirely; the first still maps. The fallback is the
-        // source offset (8) clamped into the rendering, which is shorter — scrolling past the end
-        // is not a thing the reader can do, so the last character is as far as it goes.
+    fun `a heading the rendering does not contain is left out`() {
+        // A source offset is not a position in the rendered text: the two spaces have drifted
+        // apart, and jumping to a stale source offset lands somewhere else entirely. A heading
+        // that cannot be located is dropped rather than guessed at.
         val result = headings("# Kept\n\n## Gone\n", "Kept\n\n")
 
-        assertEquals(listOf(0, 5), result.map { it.offset })
+        assertEquals(listOf("Kept"), result.map { it.text })
+        assertEquals(listOf(0), result.map { it.offset })
     }
 
     @Test
-    fun `with no rendering to map onto, offsets stay in the source`() {
-        val result = headings("# One\nbody\n## Two\n", null)
+    fun `with no rendering to map onto there is nothing to navigate`() {
+        // Without a rendering every offset would be a source offset, which the reader cannot
+        // scroll to. An empty table of contents is honest; wrong offsets are not.
+        assertEquals(emptyList<HeadingItem>(), headings("# One\nbody\n## Two\n", null))
+    }
 
-        assertEquals(listOf(0, 11), result.map { it.offset })
+    /**
+     * The bug this mapping exists to avoid, in the form it actually took: a heading carrying
+     * inline code renders without the backticks, so searching for the raw heading text fails and
+     * the old code fell back to a source offset. The drift grows with every heading above it,
+     * so late chapters were the ones that missed.
+     */
+    @Test
+    fun `a heading with inline code maps to where the renderer put it`() {
+        val markdown = "### `Zephyr Cell` 全端超级终端\n"
+        val rendered = "Zephyr Cell 全端超级终端\n"
+
+        val result = headings(markdown, rendered)
+
+        assertEquals(listOf(0), result.map { it.offset })
+    }
+
+    @Test
+    fun `markup in headings does not push later headings out of place`() {
+        val markdown = "# One\n\n## `Code` title\n\n### **Bold** title\n"
+        val rendered = "One\n\nCode title\n\nBold title\n"
+
+        val result = headings(markdown, rendered)
+
+        assertEquals(listOf("One", "`Code` title", "**Bold** title"), result.map { it.text })
+        assertEquals(listOf(0, 5, 17), result.map { it.offset })
     }
 }
