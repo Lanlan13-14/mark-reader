@@ -118,6 +118,19 @@ class ReadingWindowTest {
     }
 
     @Test
+    fun `matches after a segment without a text view still get their positions`() {
+        // A table has no TextView, so its matches cannot be painted. The positions computed
+        // for the views after it must not drift by the table's length.
+        val positions = intArrayOf(0, 2, 10, 12) // one match before the table, one after
+        val segmentLengths = intArrayOf(10, 40, 10)
+
+        val local = matchesIn(positions, 0, segmentLengths.sum())
+        assertEquals(2, local.size / 2)
+        assertEquals(10, local[0]) // the second match, still at its own offset
+        assertEquals(12, local[1])
+    }
+
+    @Test
     fun `a search over a chunk returns only the matches inside it`() {
         val text = "one two one two one"
         val matches = SearchMatches.find(text, "one")

@@ -6,8 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
-- Jumping to a heading or a search match in a large document now lands on it. The position was estimated as if every chunk had the same height, so a heading near the end opened in the middle of the document and a search match was scrolled to a place that did not contain it. The jump is now calibrated from the heights already measured and corrected to the exact line once the target is on screen.
-- Search matches in a large document are highlighted again. The highlight was skipped because a chunk did not keep the text it was built from.
+- Search no longer destroys the document's formatting. Highlighting a match replaced the styled segment with plain text, so one search wiped out headings, emphasis and code colours until the chunk was rebuilt.
+- Search works again in short documents (under the windowing threshold) and in raw text. The matches are found and counted, but none was ever painted.
+- Jumping to a heading or a search match lands on it. The position was estimated as if every chunk had the same height, so a heading near the end opened the middle of the document. The estimate now uses the document's measured pixels-per-character and is corrected to the exact line once the target chunk is on screen.
+- Matches inside or right after a table are highlighted at the right offsets.
 
 ### Fixed
 - Searching a large document no longer copies the whole document to mark each match, which stalled a search in a file of a few hundred kilobytes. Matches are recorded as positions and only the part on screen is highlighted.
