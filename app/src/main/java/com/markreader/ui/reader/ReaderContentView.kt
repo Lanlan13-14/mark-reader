@@ -607,7 +607,7 @@ fun RenderedTextView(
                     controller.pendingAnchorOffset = null
                     controller.lastRestoredKey = restoreKey
                     scrollView.post {
-                        val y = controller.windowHost?.approximateScrollY(targetOffset)
+                        val y = controller.windowHost?.scrollYFor(targetOffset)
                             ?: resolveScrollY(scrollView, controller.splitBoundaries, targetOffset)
                         // Unresolvable anchor — hold position rather than jumping.
                         if (y != null) scrollView.smoothScrollTo(0, y)
@@ -635,7 +635,22 @@ fun RenderedTextView(
                             onScrollConsumed()
                         }
                     } else {
-                        scrollToWindowOffset(scrollView, host, scrollToOffset, onScrollConsumed)
+                        val searchPaint = SearchPaint(
+                            search.value.matches, search.value.index, search.value.palette,
+                            contentTopInset.value, contentTopPx, paddingPx
+                        )
+                        val windowStyle = chunkStyleOf(
+                            ChunkColors(textColor, selectionHighlightColor, codeBlockBackgroundColor),
+                            ChunkTypography(
+                                fontSizeSp, lineHeight, readingFont, codeFont, isMonospaced,
+                                textAlignment, isCodeBlockWrapEnabled, density
+                            )
+                        )
+                        val windowText = text as android.text.Spanned
+                        scrollToWindowOffset(scrollView, host, scrollToOffset) {
+                            updateWindow(scrollView, controller, windowText, windowStyle, contentKey, searchPaint)
+                            scrollToWindowOffset(scrollView, host, scrollToOffset, onScrollConsumed = onScrollConsumed)
+                        }
                     }
                 }
 
@@ -741,29 +756,23 @@ private fun matchParentWrap() = android.view.ViewGroup.LayoutParams(
 /**
  * Scrolls a windowed document to [offset].
  *
- * The first move uses the measured character density, which is only close. Once that brings the
- * target's chunk on screen and it has been laid out, a second move lands on its exact line.
- * Capped, so a target that never lays out cannot keep the request pending.
+ * The position is exact when the chunk holding the offset is mounted and laid out, and otherwise
+ * a density-calibrated estimate; [WindowedReaderHost.scrollYFor] decides which. When it
+ * estimated, it posts [onEstimated] so the caller can re-ask after the estimate has had a
+ * layout pass to mount and lay out the target chunk, then land exactly on it.
  */
 private fun scrollToWindowOffset(
     scrollView: android.widget.ScrollView,
     host: WindowedReaderHost,
-    offset: Int,
+    deviceOffset: Int,
+    onEstimated: (() -> Unit)? = null,
     onScrollConsumed: () -> Unit
 ) {
-    val exact = host.exactScrollY(offset)
-    val destination = exact ?: host.approximateScrollY(offset)
-    val centered = (destination - scrollView.height / JUMP_VIEWPORT_DIVISOR).coerceAtLeast(0)
+    val y = host.scrollYFor(deviceOffset) { onEstimated?.invoke() }
+    val centered = (y - scrollView.height / JUMP_VIEWPORT_DIVISOR).coerceAtLeast(0)
     scrollView.smoothScrollTo(0, centered)
-    if (exact != null || host.refineAttempts >= MAX_JUMP_REFINEMENTS) {
-        host.refineAttempts = 0
-        onScrollConsumed()
-        return
-    }
-    host.refineAttempts += 1
+    onScrollConsumed()
 }
-
-private const val MAX_JUMP_REFINEMENTS = 6
 
 /** Puts the target a third of the way down the screen instead of under the top bar. */
 private const val JUMP_VIEWPORT_DIVISOR = 3

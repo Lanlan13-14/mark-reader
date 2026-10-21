@@ -101,8 +101,8 @@ internal class WindowedReaderHost(
     private var mounted = IntRange.EMPTY
     private var averageHeight = 0
 
-    /** How many times the current jump has been refined toward its exact line. */
-    var refineAttempts = 0
+    /** True while a posted refinement for an in-flight jump is still queued. */
+    private var refinePending = false
     private var layoutPending = false
 
     /**
@@ -242,36 +242,86 @@ internal class WindowedReaderHost(
         chunks[index].measuredHeight.takeIf { it > 0 } ?: averageHeight
     }
 
-    /**
-     * Scroll offset that puts rendered-text offset [offset] at the top of the viewport, mounting
-     * the chunk that contains it first. Returns null until that chunk has been laid out, which
-     * tells the caller to ask again rather than guess.
-     */
-    /** The line position of [offset], or null until the chunk that holds it has been laid out. */
-    fun exactScrollY(offset: Int): Int? {
-        val index = chunkIndex(offset)
-        if (index < 0) return null
-        val lines = chunks[index].view?.let { segmentPlacement(it).lines } ?: return null
-        if (lines.textLength == 0) return null
-        val local = (offset - chunks[index].start).coerceIn(0, lines.textLength - 1)
-        val base = ReadingWindow.offsetOf(measuredHeights(), index)
-        return base + lines.getLineTop(lines.getLineForOffset(local))
+    /** The index of the chunk that contains [offset]. */
+    private fun chunkIndex(offset: Int): Int {
+        val found = chunks.indexOfFirst { offset >= it.start && offset < it.end }
+        return if (found >= 0) found else chunks.lastIndex
     }
 
     /**
-     * A position close to [offset], used to bring its chunk on screen so [exactScrollY] can take
-     * over. Calibrated from chunks that have been measured, so it follows this document's real
-     * density instead of assuming every chunk is the same height.
+     * The scroll offset that puts rendered-text offset [offset] at the top of the viewport.
+     *
+     * Exact when the chunk holding it is mounted and laid out. Otherwise calibrated from the
+     * chunks already measured: the average pixels per character of this document, applied to
+     * every unmeasured chunk, which follows a mixed prose/code document far better than a flat
+     * height per chunk. [callback] runs once the estimate has had a chance to be corrected.
      */
-    fun approximateScrollY(offset: Int): Int {
+    fun scrollYFor(offset: Int, callback: (() -> Unit)? = null): Int {
         val index = chunkIndex(offset)
         if (index < 0) return 0
         val chunk = chunks[index]
-        val base = ReadingWindow.offsetOf(measuredHeights(), index)
-        val span = (chunk.end - chunk.start).coerceAtLeast(1)
-        val local = (offset - chunk.start).coerceIn(0, span - 1)
-        val height = chunk.measuredHeight.takeIf { it > 0 } ?: (span * pixelsPerChar()).toInt()
-        return base + height * local / span
+        val local = (offset - chunk.start).coerceIn(0, (chunk.end - chunk.start).coerceAtLeast(1) - 1)
+        if (local == 0) return ReadingWindow.offsetOf(measuredHeights(), index)
+
+        val mounted = chunk.view
+        if (mounted != null) {
+            val lines = segmentLines(mounted)
+            if (lines != null && lines.textLength > 0) {
+                val base = ReadingWindow.offsetOf(measuredHeights(), index)
+                return base + lines.getLineTop(lines.getLineForOffset(local))
+            }
+        }
+        // Not mounted, or mounted but not yet laid out: estimate from measured density.
+        val heights = calibratedHeights()
+        val base = ReadingWindow.offsetOf(heights, index)
+        val callback0 = callback
+        if (callback0 != null) {
+            if (!refinePending) {
+                refinePending = true
+                container.post {
+                    refinePending = false
+                    callback0()
+                }
+                container.postDelayed({ if (refinePending) refinePending = false }, REFINE_GIVE_UP_MS)
+            }
+        }
+        return base + heights[index] * local / (chunk.end - chunk.start).coerceAtLeast(1)
+    }
+
+    /**
+     * Heights for positioning: measured where a chunk has been laid out, and for the rest the
+     * document's own measured pixels-per-character, not a flat average height. A heading near
+     * the end of a dense document then estimates close to where it really is, instead of a
+     * flat average placing it in the middle.
+     */
+    private fun calibratedHeights(): IntArray {
+        val heights = measuredHeights()
+        var pixels = 0
+        var chars = 0
+        for (chunk in chunks) {
+            if (chunk.measuredHeight <= 0) continue
+            pixels += chunk.measuredHeight
+            chars += chunk.end - chunk.start
+        }
+        if (chars == 0) return heights
+        val perChar = pixels.toFloat() / chars
+        for (index in chunks.indices) {
+            if (chunks[index].measuredHeight > 0) continue
+            heights[index] = ((chunks[index].end - chunks[index].start) * perChar).toInt().coerceAtLeast(1)
+        }
+        return heights
+    }
+
+    /** The lines of the first text view inside [view], or null when it has none laid out. */
+    private fun segmentLines(view: View): LineMetrics? {
+        if (view is LinearLayout) {
+            for (index in 0 until view.childCount) {
+                val inner = segmentLines(view.getChildAt(index))
+                if (inner != null) return inner
+            }
+            return null
+        }
+        return segmentPlacement(view).lines
     }
 
     /** Rendered-text offset at the top of the viewport, for restoring a position by content. */
@@ -281,7 +331,7 @@ internal class WindowedReaderHost(
         for ((index, chunk) in chunks.withIndex()) {
             val bottom = top + heights[index]
             if (bottom > scrollY) {
-                val lines = chunk.view?.let { segmentPlacement(it).lines }
+                val lines = chunk.view?.let { segmentLines(it) }
                 if (lines == null) return chunk.start
                 val localY = (scrollY - top).coerceAtLeast(0)
                 return chunk.start + lines.getLineStart(lines.getLineForVertical(localY))
@@ -290,27 +340,6 @@ internal class WindowedReaderHost(
         }
         return chunks.lastOrNull()?.start
     }
-
-    /** Content height, measured where a chunk has been laid out and estimated elsewhere. */
-    private fun chunkIndex(offset: Int): Int {
-        val found = chunks.indexOfFirst { offset >= it.start && offset < it.end }
-        return if (found >= 0) found else chunks.lastIndex
-    }
-
-    /** Measured pixels per character, falling back to the initial estimate. */
-    private fun pixelsPerChar(): Float {
-        var pixels = 0
-        var chars = 0
-        for (chunk in chunks) {
-            if (chunk.measuredHeight <= 0) continue
-            pixels += chunk.measuredHeight
-            chars += chunk.end - chunk.start
-        }
-        if (chars > 0) return pixels.toFloat() / chars
-        val sample = chunks.firstOrNull()?.let { it.end - it.start } ?: ReadingWindow.TARGET_CHUNK_CHARS
-        return averageHeight.toFloat() / sample.coerceAtLeast(1)
-    }
-
 
     /** Index of the last heading whose line starts above [scrollY], across mounted chunks. */
     fun activeHeading(headings: List<HeadingItem>, scrollY: Int): Int {
@@ -342,7 +371,7 @@ internal fun ChunkBody.showSearch(
     chunkEnd: Int,
     palette: SearchPalette
 ) {
-    if (plain.size != childCount) return
+    if (segmentTexts.size != childCount) return
     val positions = matches?.within(chunkStart, chunkEnd) ?: IntArray(0)
     val activeStart = if (matches != null && activeIndex in 0 until matches.count) {
         matches.startAt(activeIndex) - chunkStart
@@ -351,11 +380,13 @@ internal fun ChunkBody.showSearch(
     }
     var origin = 0
     for (index in 0 until childCount) {
-        val view = extractTextView(getChildAt(index)) ?: continue
-        val length = plain[index].length
-        view.text = highlightedSlice(
-            plain[index], matchesIn(positions, origin, origin + length), activeStart - origin, palette
-        )
+        val length = segmentTexts[index].length
+        val view = extractTextView(getChildAt(index))
+        if (view != null) {
+            view.text = highlightedSlice(
+                segmentTexts[index], matchesIn(positions, origin, origin + length), activeStart - origin, palette
+            )
+        }
         origin += length
     }
 }
@@ -363,7 +394,9 @@ internal fun ChunkBody.showSearch(
 
 internal class ChunkBody(context: Context, style: ChunkStyle) : LinearLayout(context) {
     private var builtForWrap = style.typography.isCodeBlockWrapEnabled
-    internal var plain: List<CharSequence> = emptyList()
+
+    /** The spanned slice each child view was built from, kept for search repainting. */
+    internal var segmentTexts: List<Spanned> = emptyList()
 
     init {
         orientation = VERTICAL
@@ -378,7 +411,7 @@ internal class ChunkBody(context: Context, style: ChunkStyle) : LinearLayout(con
                 splitCode = !style.typography.isCodeBlockWrapEnabled,
                 splitTables = true
             )
-            plain = segments.map { (start, end, _) -> text.subSequence(start, end).toString() }
+            segmentTexts = segments.map { (start, end, _) -> text.subSequence(start, end) as Spanned }
             for ((start, end, type) in segments) {
                 addView(segmentView(text.subSequence(start, end) as Spanned, type, style), matchWrap())
             }
@@ -395,6 +428,7 @@ internal class ChunkBody(context: Context, style: ChunkStyle) : LinearLayout(con
                 val content = if (segment.type == SegmentType.Code) stripBackgroundSpans(slice) else slice
                 extractTextView(getChildAt(index))?.text = content
             }
+            segmentTexts = segments.map { (start, end, _) -> text.subSequence(start, end) as Spanned }
         }
         restyle(style)
     }
@@ -468,6 +502,9 @@ internal class ChunkBody(context: Context, style: ChunkStyle) : LinearLayout(con
 private fun spacerView(context: Context, height: Int): View = View(context).apply {
     minimumHeight = height
 }
+
+/** How long an estimated jump waits for a layout pass before giving up on refinement. */
+private const val REFINE_GIVE_UP_MS = 750L
 
 /** Layout params shared by every chunk row: full width, as tall as the content. */
 private fun chunkLayout() = LinearLayout.LayoutParams(

@@ -39,6 +39,9 @@ internal fun highlightedSlice(
     activeStart: Int,
     palette: SearchPalette
 ): Spanned {
+    // Built from the segment slice held by the chunk. The slice itself never carries search
+    // spans — they live only on the copy handed to the text view — so a repaint replaces the
+    // previous highlights instead of stacking on them.
     val highlighted = SpannableString(text)
     var index = 0
     while (index < positions.size) {
