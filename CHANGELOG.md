@@ -6,6 +6,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- Jumps to late chapters and late search matches land accurately in long documents, and no longer degrade toward the end: chunk heights are one shared table — measured where a chunk has laid out, estimated from the document's own pixels-per-character and code-fence line counts elsewhere — used by both the layout and every position computation.
+- Long jumps stop animating toward a guess: the first move is instant so the target chunk mounts and lays out, and the correction to its exact line animates over a short distance.
+- Stepping through search matches no longer rescans the whole document per step, and match lookup per visible chunk is now a binary search over the sorted match list instead of a full scan.
+- The per-frame work while scrolling drops: chunk heights and their prefix sums are cached until a real measurement changes, instead of being rebuilt every scroll frame.
+
+### Fixed
 - Search no longer destroys the document's formatting. Highlighting a match replaced the styled segment with plain text, so one search wiped out headings, emphasis and code colours until the chunk was rebuilt.
 - Search works again in short documents (under the windowing threshold) and in raw text. The matches are found and counted, but none was ever painted.
 - Jumping to a heading or a search match lands on it. The position was estimated as if every chunk had the same height, so a heading near the end opened the middle of the document. The estimate now uses the document's measured pixels-per-character and is corrected to the exact line once the target chunk is on screen.

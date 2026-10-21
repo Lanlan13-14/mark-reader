@@ -118,6 +118,39 @@ class ReadingWindowTest {
     }
 
     @Test
+    fun `within returns the same matches as a linear scan`() {
+        val text = (1..600).joinToString(" ") { "ip$it value$it ip" }
+        val matches = SearchMatches.find(text, "ip")
+
+        // Sliding windows over the document: the binary-search fast path must agree with the
+        // straightforward reading of "matches overlapping this window".
+        val windows = ArrayList<IntRange>()
+        for (start in 0 until text.length step 997) {
+            for (span in intArrayOf(0, 1, 50, 5000)) {
+                windows.add(start until (start + span).coerceAtMost(text.length))
+            }
+        }
+        windows.forEach { window ->
+            val expected = linearOverlaps(matches, window.first, window.last + 1)
+            assertEquals(expected, matches.within(window.first, window.last + 1).toList())
+        }
+    }
+
+    /** The straightforward reading: every match overlapping [start, end), localized to it. */
+    private fun linearOverlaps(matches: SearchMatches, start: Int, end: Int): List<Int> {
+        val expected = ArrayList<Int>()
+        for (i in 0 until matches.count) {
+            val ms = matches.startAt(i)
+            val me = ms + 2
+            if (me > start && ms < end) {
+                expected.add((ms - start).coerceAtLeast(0))
+                expected.add((me - start).coerceAtMost(end - start))
+            }
+        }
+        return expected
+    }
+
+    @Test
     fun `matches after a segment without a text view still get their positions`() {
         // A table has no TextView, so its matches cannot be painted. The positions computed
         // for the views after it must not drift by the table's length.

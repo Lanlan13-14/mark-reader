@@ -349,7 +349,6 @@ class ViewerViewModel(
         val next = (_uiState.value.searchMatchIndex + 1) % count
         _uiState.value = _uiState.value.copy(searchMatchIndex = next)
         _scrollToOffset.value = matches.startAt(next)
-        applySearchQuery(_uiState.value.searchQuery)
     }
 
     fun onPreviousMatch() {
@@ -358,7 +357,6 @@ class ViewerViewModel(
         val prev = if (_uiState.value.searchMatchIndex - 1 < 0) count - 1 else _uiState.value.searchMatchIndex - 1
         _uiState.value = _uiState.value.copy(searchMatchIndex = prev)
         _scrollToOffset.value = matches.startAt(prev)
-        applySearchQuery(_uiState.value.searchQuery)
     }
 
     fun onHeadingSelected(offset: Int) {

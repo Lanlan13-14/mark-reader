@@ -776,6 +776,13 @@ fun ViewerScreen(
                         warningMessage = warningMessage,
                         topInset = if (hasWarning) chromeTopInset else 0.dp
                     ) {
+                        val searchPalette = remember(isSurfaceDark) {
+                            SearchPalette(
+                                passive = if (isSurfaceDark) 0x66FFD54F.toInt() else 0x553197F5.toInt(),
+                                active = if (isSurfaceDark) 0xCCFFD54F.toInt() else 0xFF1565C0.toInt(),
+                                activeText = if (isSurfaceDark) 0xFF1A1A1A.toInt() else 0xFFFFFFFF.toInt()
+                            )
+                        }
                         RenderedTextView(
                             text = text,
                             textColor = contentColor.toArgb(),
@@ -786,11 +793,7 @@ fun ViewerScreen(
                                 ReaderSearch(
                                     uiState.searchMatches,
                                     uiState.searchMatchIndex,
-                                    SearchPalette(
-                                        passive = if (isSurfaceDark) 0x66FFD54F.toInt() else 0x553197F5.toInt(),
-                                        active = if (isSurfaceDark) 0xCCFFD54F.toInt() else 0xFF1565C0.toInt(),
-                                        activeText = if (isSurfaceDark) 0xFF1A1A1A.toInt() else 0xFFFFFFFF.toInt()
-                                    )
+                                    searchPalette
                                 )
                             ),
                             scrollToOffset = scrollToOffset,

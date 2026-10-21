@@ -89,14 +89,30 @@ class SearchMatches internal constructor(val query: String, private val ranges: 
 
     /** The matches overlapping [start, end), as pairs of offsets local to [start]. */
     fun within(start: Int, end: Int): IntArray {
-        if (count == 0 || end <= start) return EMPTY
+        if (count == 0 || end < start) return EMPTY
+        // Matches are stored sorted by start, so binary-search the first one that can overlap
+        // and stop at the first that cannot: O(log n + hits) instead of O(n) per mounted chunk.
+        var low = 0
+        var high = count - 1
+        var first = count
+        while (low <= high) {
+            val mid = (low + high) ushr 1
+            if (ranges[mid * 2 + 1] > start) {
+                first = mid
+                high = mid - 1
+            } else {
+                low = mid + 1
+            }
+        }
         val found = ArrayList<Int>()
-        for (index in 0 until count) {
+        var index = first
+        while (index < count) {
             val matchStart = ranges[index * 2]
             val matchEnd = ranges[index * 2 + 1]
-            if (matchEnd <= start || matchStart >= end) continue
+            if (matchStart >= end) break
             found.add((matchStart - start).coerceAtLeast(0))
             found.add((matchEnd - start).coerceAtMost(end - start))
+            index += 1
         }
         return found.toIntArray()
     }
