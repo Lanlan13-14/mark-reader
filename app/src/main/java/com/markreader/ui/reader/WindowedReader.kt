@@ -238,7 +238,6 @@ internal class WindowedReaderHost(
         for (index in chunks.indices) {
             val chunk = chunks[index]
             val shouldMount = index in range
-            val existing = container.getChildAt(index)
             if (shouldMount && chunk.view == null) {
                 val body = ChunkBody(container.context, current)
                 body.bind(chunk.text, current)
