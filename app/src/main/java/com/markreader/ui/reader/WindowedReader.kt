@@ -135,6 +135,7 @@ internal class WindowedReaderHost(
 
         /** Cached by [chunkIndex], so a binary search does not re-string the chunk per call. */
         internal var cachedPlain: String? = null
+        fun plain(): String = cachedPlain ?: text.toString().also { cachedPlain = it }
 
         /** Whether the chunk contains a code fence; computed lazily, once. */
         internal var codeFenceKnown = false
@@ -286,6 +287,19 @@ internal class WindowedReaderHost(
      */
     private var heightsCache: IntArray? = null
     private var prefixCache: IntArray? = null
+
+    /**
+     * Estimated height of an unmeasured chunk. A chunk that contains code fences estimates from
+     * its line count — code lines are short and hard-wrapped, so a characters-per-height model
+     * badly overstates them — and everything else from the document's measured density.
+     */
+    private fun estimatedHeight(chunk: Chunk, perChar: Float): Int {
+        if (chunk.hasCodeFence()) {
+            val lineHeight = style?.typography?.let { it.fontSizeSp * it.lineHeight * it.density } ?: 0f
+            if (lineHeight > 0f) return (chunk.countLines() * lineHeight).toInt().coerceAtLeast(MIN_CHUNK_HEIGHT)
+        }
+        return ((chunk.end - chunk.start) * perChar).toInt().coerceAtLeast(1)
+    }
 
     /**
      * The height of every chunk — and the single source of truth for it: both the spacer a
