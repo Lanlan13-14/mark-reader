@@ -125,9 +125,11 @@ class ReadingWindowTest {
         val segmentLengths = intArrayOf(10, 40, 10)
 
         val local = matchesIn(positions, 0, segmentLengths.sum())
-        assertEquals(2, local.size / 2)
-        assertEquals(10, local[0]) // the second match, still at its own offset
-        assertEquals(12, local[1])
+        assertEquals(4, local.size)
+        assertEquals(0, local[0])
+        assertEquals(2, local[1])
+        assertEquals(10, local[2]) // the second match, still at its own offset
+        assertEquals(12, local[3])
     }
 
     @Test
