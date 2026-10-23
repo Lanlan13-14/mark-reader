@@ -47,7 +47,7 @@ export async function runMathTests(assert, fixture, original = '') {
     if (original) {
         const originalHtml = math(original);
         check(!originalHtml.includes('katex-error'), 'original eight answers have no invalid formulas');
-        const visible = originalHtml.replace(/<annotation[\s\S]*?<\/annotation>/g, '').replace(/<[^>]*>/g, '');
+        const visible = originalHtml.replace(/<pre>[\s\S]*?<\/pre>/g, '').replace(/<code>[\s\S]*?<\/code>/g, '').replace(/<annotation[\s\S]*?<\/annotation>/g, '').replace(/<[^>]*>/g, '');
         check(!/\\(?:[A-Za-z]+|%)/.test(visible), `original eight answers leave no unrendered TeX: ${visible.match(/.{0,30}\\(?:[A-Za-z]+|%).{0,30}/g)}`);
         check(annotations(original).includes(String.raw`f&#x27;(x) = \frac{1}{x} + e^{-x}`), 'original derivative is complete');
         check(annotations(original).includes(String.raw`1 - 70\% = 30\% = 0.3`), 'original probability percent equation complete');

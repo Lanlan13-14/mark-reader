@@ -40,6 +40,15 @@ function explicitTex(state, silent) {
     }
     return false;
 }
+const nextSlashCache = new WeakMap();
+function nextSlash(state) {
+    let cached = nextSlashCache.get(state);
+    if (!cached || cached.pos !== -1 && cached.pos < state.pos) {
+        cached = { pos: state.src.indexOf('\\', state.pos) };
+        nextSlashCache.set(state, cached);
+    }
+    return cached.pos;
+}
 function bareTex(state, silent) {
     if (state.linkLevel > 0) return false;
     const src = state.src;
@@ -47,8 +56,8 @@ function bareTex(state, silent) {
     // No starts in a word, URL/path, escaped backslash, or a numbered list marker.
     if (start && /[\w\\/:]/.test(src[start - 1])) return false;
     if (!/[A-Za-z0-9(\\]/.test(src[start] || '')) return false;
-    const slash = src.indexOf('\\', start);
-    if (slash < start || slash - start >= MAX_BARE_LENGTH) return false;
+    const slash = src.slice(start, start + MAX_BARE_LENGTH).indexOf('\\');
+    if (slash === -1) return false;
     let pos = start, braces = 0, parens = 0, command = false;
     const scanEnd = Math.min(state.posMax, start + MAX_BARE_LENGTH);
     while (pos < scanEnd) {
@@ -114,7 +123,7 @@ export function extendedMathPlugin(md) {
         const end = state.pos, nextPending = state.pending;
         // text normally stops at the first backslash. No command ahead: leave its fast
         // path intact. Only the bounded tail can belong to that command's expression.
-        const slash = state.src.indexOf('\\', start);
+        const slash = nextSlash(state);
         if (slash === -1 || slash > end + MAX_BARE_LENGTH) return true;
         for (let pos = Math.max(start + 1, slash - MAX_BARE_LENGTH + 1); pos < end; pos++) {
             if (!/[A-Za-z0-9(]/.test(state.src[pos])) continue;
