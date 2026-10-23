@@ -1,6 +1,8 @@
 package com.markreader.webview
 
 import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.net.Uri
@@ -159,6 +161,7 @@ class WebViewDocumentHost(
     }
 
     private val searchController = WebViewSearchController(webView, scope)
+    val toc = WebViewTocController(::call)
 
     init {
         webView.loadUrl(PAGE_URL)
@@ -223,6 +226,7 @@ class WebViewDocumentHost(
         preserveScroll: Boolean = false,
     ) {
         searchController.invalidateDocument()
+        val tocGeneration = toc.invalidate()
         scope.launch(Dispatchers.Main) {
             val read = withContext(Dispatchers.IO) {
                 runCatching { space.readText(virtualPath) }
@@ -237,6 +241,7 @@ class WebViewDocumentHost(
             call(
                 "showDocument",
                 JSONObject()
+                    .put("tocGeneration", tocGeneration)
                     .put("path", virtualPath)
                     .put("text", text)
                     .put("rootPath", rootPath ?: JSONObject.NULL)
@@ -264,11 +269,13 @@ class WebViewDocumentHost(
         preserveScroll: Boolean = false,
     ) {
         searchController.invalidateDocument()
+        val tocGeneration = toc.invalidate()
         scope.launch(Dispatchers.Main) {
             pageReady.await()
             call(
                 "showDocument",
                 JSONObject()
+                    .put("tocGeneration", tocGeneration)
                     .put("path", virtualPath)
                     .put("text", text)
                     .put("rootPath", rootPath ?: JSONObject.NULL)
@@ -419,9 +426,23 @@ class WebViewDocumentHost(
         @JavascriptInterface
         fun rendered(virtualPath: String) = fromHostPage { onDocumentRendered(virtualPath) }
 
+        /** Called after every renderer heading or active-section update. */
+        @JavascriptInterface
+        fun tocChanged(json: String) = fromHostPage { toc.receive(json) }
+
         /** Called after every renderer layout, including same-document settings re-renders. */
         @JavascriptInterface
         fun searchRendered() = fromHostPage { searchController.rendered() }
+
+        @JavascriptInterface
+        fun copyText(requestId: String, text: String) = fromHostPage {
+            if (requestId.length > MAX_COPY_ID_LENGTH) return@fromHostPage
+            val success = text.length <= MAX_COPY_CHARS && runCatching {
+                val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                manager.setPrimaryClip(ClipData.newPlainText("Code", text))
+            }.isSuccess
+            call("completeCopy", JSONObject().put("id", requestId).put("ok", success))
+        }
 
         @JavascriptInterface
         fun openPath(virtualPath: String) = fromHostPage { openDocument(virtualPath) }
@@ -441,7 +462,7 @@ class WebViewDocumentHost(
          */
         private inline fun fromHostPage(crossinline action: () -> Unit) {
             scope.launch(Dispatchers.Main) {
-                if (!destroyed && webView.url?.startsWith(PAGE_URL) == true) {
+                if (!destroyed && webView.url?.substringBefore('#') == PAGE_URL) {
                     action()
                 }
             }
@@ -456,6 +477,8 @@ class WebViewDocumentHost(
 
         const val PAGE_URL = "$ORIGIN${ASSETS_PREFIX}renderer/android-host.html"
 
+        const val MAX_COPY_CHARS = 2_000_000
+        const val MAX_COPY_ID_LENGTH = 32
         const val BRIDGE_NAME = "__mdrHost"
 
         /**

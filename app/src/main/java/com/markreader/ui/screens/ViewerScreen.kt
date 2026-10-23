@@ -125,6 +125,8 @@ import com.markreader.ui.resolve
 import com.markreader.ui.reader.RenderedTextView
 import com.markreader.ui.reader.WebViewReader
 import com.markreader.webview.rendererSettingsFor
+import com.markreader.webview.WebViewHeading
+import com.markreader.webview.WebViewToc
 import kotlin.math.roundToInt
 
 /**
@@ -364,9 +366,18 @@ fun ViewerScreen(
         rendered = uiState.rendered,
         rendererUnavailable = rendererUnavailable
     )
-    // Heading offsets still belong to the span surface; WebView search uses native find.
+    // Native spans use character offsets; Markdown uses renderer-owned DOM identities.
     val isContentIndexable = readerContent is ReaderContent.Spans
+    val isMarkdown = readerContent is ReaderContent.Markdown
     val isContentSearchable = isContentIndexable || readerContent is ReaderContent.Markdown
+    var webViewToc by remember(uriString) { mutableStateOf(WebViewToc()) }
+    var headingNavigation by remember { mutableStateOf<((WebViewHeading) -> Unit)?>(null) }
+    val tocHeadings = if (isMarkdown) {
+        webViewToc.headings.map { HeadingItem(it.text, it.level, 0) }
+    } else uiState.headings
+    val tocActiveIndex = if (isMarkdown) webViewToc.activeIndex else uiState.activeHeadingIndex
+    val canShowToc = (uiState.capabilities.hasHeadings && isContentIndexable) ||
+        (uiState.capabilities.hasHeadings && isMarkdown)
     var webViewSearchNavigation by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
 
     Scaffold(
@@ -485,7 +496,7 @@ fun ViewerScreen(
                                     }
                                 },
                                 navigationIcon = {
-                                    if (uiState.capabilities.hasHeadings && isContentIndexable) {
+                                    if (canShowToc) {
                                         FilledTonalIconButton(
                                             onClick = {
                                                 haptics.performHapticFeedback(HapticFeedbackType.Confirm)
@@ -826,12 +837,15 @@ fun ViewerScreen(
                                 searchQuery = if (uiState.isSearchActive) uiState.searchQuery else "",
                                 onSearchResult = viewModel::onWebViewSearchResult,
                                 onSearchNavigationReady = { webViewSearchNavigation = it },
+                                onTocChanged = { webViewToc = it },
+                                onHeadingNavigationReady = { headingNavigation = it },
                                 documentUri = uriString.orEmpty(),
                                 fileName = uiState.fileName,
                                 settings = rendererSettingsFor(
                                     preferences = prefs,
                                     isDark = isSurfaceDark,
-                                    isCodeBlockWrapEnabled = isCodeBlockWrapEnabled
+                                    isCodeBlockWrapEnabled = isCodeBlockWrapEnabled,
+                                    sourceCode = uiState.capabilities.isMonospaced
                                 ),
                                 padding = PaddingValues(0.dp),
                                 contentTopInset = if (hasWarning) 0.dp else chromeTopInset,
@@ -906,8 +920,8 @@ fun ViewerScreen(
                         Text(
                             text = pluralStringResource(
                                 R.plurals.toc_heading_count,
-                                uiState.headings.size,
-                                uiState.headings.size
+                                tocHeadings.size,
+                                tocHeadings.size
                             ),
                             style = MaterialTheme.typography.bodySmall,
                             color = chromeColors.muted
@@ -929,7 +943,7 @@ fun ViewerScreen(
                         )
                     }
                 }
-                if (uiState.headings.isEmpty()) {
+                if (tocHeadings.isEmpty()) {
                     Text(
                         text = stringResource(R.string.toc_empty),
                         style = MaterialTheme.typography.bodyMedium,
@@ -938,9 +952,9 @@ fun ViewerScreen(
                     )
                 } else {
                     val tocListState = rememberLazyListState()
-                    LaunchedEffect(Unit) {
-                        if (uiState.activeHeadingIndex > 0) {
-                            tocListState.scrollToItem(uiState.activeHeadingIndex - 1)
+                    LaunchedEffect(tocHeadings.size) {
+                        if (tocActiveIndex > 0) {
+                            tocListState.scrollToItem(tocActiveIndex - 1)
                         }
                     }
                     LazyColumn(
@@ -948,15 +962,19 @@ fun ViewerScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        itemsIndexed(uiState.headings) { index, heading ->
+                        itemsIndexed(tocHeadings) { index, heading ->
                             TocHeadingRow(
                                 heading = heading,
-                                position = segmentPositionFor(index, uiState.headings.size),
-                                isActive = index == uiState.activeHeadingIndex,
+                                position = segmentPositionFor(index, tocHeadings.size),
+                                isActive = index == tocActiveIndex,
                                 colors = chromeColors,
                                 onClick = {
                                     haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-                                    viewModel.onHeadingSelected(heading.offset)
+                                    if (isMarkdown) {
+                                        webViewToc.headings.getOrNull(index)?.let { headingNavigation?.invoke(it) }
+                                    } else {
+                                        viewModel.onHeadingSelected(heading.offset)
+                                    }
                                     isTocVisible = false
                                 }
                             )

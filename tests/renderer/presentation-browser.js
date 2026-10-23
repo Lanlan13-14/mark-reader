@@ -1,0 +1,21 @@
+import { DocumentView } from '../../app/src/main/assets/renderer/document.js';
+import { setConfig } from '../../app/src/main/assets/renderer/config.js';
+import { setDocumentHtml } from '../../app/src/main/assets/renderer/sanitizer.js';
+import { enhanceCodeBlocks, enhanceTables } from '../../app/src/main/assets/renderer/presentation.js';
+const params = new URLSearchParams(location.search);
+setConfig({ theme: params.get('theme') || 'light', math: false, mermaid: false });
+const root = document.querySelector('main');
+window.copyCalls = [];
+window.copyMode = 'success';
+const host = { copyText: async text => {
+    if (window.copyMode === 'failure') throw new Error('Native clipboard denied');
+    window.copyCalls.push(text);
+} };
+const view = new DocumentView({ root, host });
+window.view = view;
+view.applyTheme();
+view.setWordWrap(params.get('wrap') === 'true');
+const source = await (await fetch('./fixtures/presentation.md')).text();
+await view.setDocumentAsync({ path: '/fixture.md', text: source }, {});
+window.helpers = { enhanceCodeBlocks, enhanceTables, setDocumentHtml };
+window.ready = true;

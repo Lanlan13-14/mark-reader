@@ -10,12 +10,15 @@ const original = await readFile(new URL('./fixtures/user-eight-answers.md', impo
 const { count } = await runMathTests((value, message) => assert.ok(value, message), fixture, original);
 const md = MarkdownIt();
 getPlugins().forEach(plugin => md.use(plugin));
-for (const source of ['ordinary plain English prose '.repeat(40000), 'x + '.repeat(200000), 'x + '.repeat(50000) + '\\alpha', 'a'.repeat(1000000)]) {
+for (const source of ['ordinary plain English prose '.repeat(40000), 'x + '.repeat(200000), 'x + '.repeat(50000) + '\\alpha', 'a'.repeat(1000000), '\\[\nx=1\n'.repeat(10000), '\\( '.repeat(20000), '\\frac{'.repeat(10000), 'x^'.repeat(20000)]) {
     const start = performance.now();
     md.render(source);
     const ms = performance.now() - start;
-    assert.ok(ms < 10000, `large prose/repetition completes within 10s: ${ms}ms`);
-    console.log(`PERF ${source.length} characters: ${Math.round(ms)}ms`);
+    const budget = source.length <= 70000 ? 500 : 2000;
+    assert.ok(ms < budget, `bounded scanner completes within ${budget}ms: ${ms}ms`);
+    const rss = process.memoryUsage().rss;
+    assert.ok(rss < 2 * 1024 ** 3, `RSS below 2GiB: ${rss}`);
+    console.log(`PERF ${source.length} characters: ${Math.round(ms)}ms; RSS ${Math.round(rss / 1024 ** 2)}MiB`);
 }
 const css = await readFile(new URL('../../app/src/main/assets/renderer/css/katex.css', import.meta.url), 'utf8');
 const fonts = [...css.matchAll(/url\(([^)]+)\)/g)].map(match => match[1]);

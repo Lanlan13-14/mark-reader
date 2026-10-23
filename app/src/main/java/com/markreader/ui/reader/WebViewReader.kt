@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.markreader.webview.RendererSettings
 import com.markreader.webview.WebViewDocumentHost
+import com.markreader.webview.WebViewHeading
+import com.markreader.webview.WebViewToc
 
 /**
  * The reader surface for [com.markreader.format.ReaderContent.Markdown]: the shared renderer,
@@ -69,6 +71,8 @@ fun WebViewReader(
     searchQuery: String = "",
     onSearchResult: (query: String, count: Int, index: Int) -> Unit = { _, _, _ -> },
     onSearchNavigationReady: (((Boolean) -> Unit)?) -> Unit = {},
+    onTocChanged: (WebViewToc) -> Unit = {},
+    onHeadingNavigationReady: (((WebViewHeading) -> Unit)?) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -80,6 +84,8 @@ fun WebViewReader(
     val unavailable by rememberUpdatedState(onRendererUnavailable)
     val searchResult by rememberUpdatedState(onSearchResult)
     val navigationReady by rememberUpdatedState(onSearchNavigationReady)
+    val tocChanged by rememberUpdatedState(onTocChanged)
+    val headingNavigationReady by rememberUpdatedState(onHeadingNavigationReady)
     val host = remember {
         WebViewDocumentHost(
             context,
@@ -93,7 +99,12 @@ fun WebViewReader(
 
     DisposableEffect(host) {
         navigationReady(host.findNext)
+        host.toc.onChanged = { tocChanged(it) }
+        headingNavigationReady(host.toc::reveal)
         onDispose {
+            host.toc.onChanged = {}
+            headingNavigationReady(null)
+            tocChanged(WebViewToc())
             navigationReady(null)
             host.destroy()
         }
