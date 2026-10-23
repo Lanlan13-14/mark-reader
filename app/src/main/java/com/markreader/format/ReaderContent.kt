@@ -14,10 +14,22 @@ package com.markreader.format
  */
 sealed interface ReaderContent {
     /**
-     * A rendered document as HTML, for the WebView host to load. Produced from P6a, when the
-     * shared renderer replaces Markwon.
+     * Markdown source, for the shared renderer to draw in the WebView.
+     *
+     * **Not HTML, and the distinction is the whole architecture.** The renderer is JavaScript
+     * running inside the page — `document.js` calls `engine.render(doc.text)` — so Kotlin never
+     * holds rendered markup and could not produce it without a second Markdown implementation,
+     * which is the duplication the shared renderer exists to remove. What crosses the bridge is
+     * source text; the page turns it into HTML, sanitises it, and puts it on screen.
+     *
+     * A format reaches this variant by *deciding* its document renders that way, not by doing
+     * the rendering. `SourceCodeFormat` fences its source into a code block to get there, which
+     * is also how highlight.js comes to have a real grammar for it.
+     *
+     * The path a document is known by is the reader surface's to supply, not the format's — the
+     * format layer has no business knowing about SAF.
      */
-    data class Html(val html: String) : ReaderContent
+    data class Markdown(val source: String) : ReaderContent
 
     /**
      * A document as text, styled or not.
@@ -29,11 +41,10 @@ sealed interface ReaderContent {
      * and tables their own scrollable panes — narrow to `Spanned` at the point of that
      * requirement.
      *
-     * The Markwon and Prism paths today; after P6a it survives for raw mode, which needs no
-     * renderer at all.
+     * Raw mode, and the editor preview until Markwon is retired from it.
      */
     data class Spans(val text: CharSequence) : ReaderContent
 
-    /** A tabular document, drawn by `TableRenderer`. Produced from P5, by the CSV format. */
+    /** A tabular document, drawn by `TableRenderer`. For the planned CSV format. */
     data class Table(val rows: List<List<String>>) : ReaderContent
 }

@@ -189,6 +189,20 @@ const page = {
 	},
 
 	/**
+	 * Room to leave at the top of the document for the chrome Compose draws over it.
+	 *
+	 * Android-only, and not part of the shared host contract: the desktop shell sizes its own
+	 * toolbar offset in `app.css`. Applied as document padding so it scrolls away with the
+	 * content when the chrome collapses.
+	 *
+	 * @param json {string} a JSON `{ top }`, in CSS pixels.
+	 */
+	setContentInset(json) {
+		const top = Number(JSON.parse(json).top) || 0;
+		document.documentElement.style.setProperty('--mr-content-inset-top', `${Math.max(0, top)}px`);
+	},
+
+	/**
 	 * @param json {string} a JSON settings object, in the shape `config.ts` persists. Validated
 	 *   by `parseConfig`, which drops unknown keys and falls back per-setting — it is the same
 	 *   check the desktop app applies to settings that have been on disk, and Kotlin's DataStore
