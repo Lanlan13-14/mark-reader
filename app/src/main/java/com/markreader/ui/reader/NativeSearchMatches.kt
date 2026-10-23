@@ -18,6 +18,9 @@ class NativeSearchMatches private constructor(private val bounds: IntArray) {
     }
 
     companion object {
+        private const val CANCELLATION_CHECK_MASK = 1023
+        private const val INITIAL_BOUNDS_CAPACITY = 32
+
         val Empty = NativeSearchMatches(IntArray(0))
 
         /**
@@ -28,21 +31,12 @@ class NativeSearchMatches private constructor(private val bounds: IntArray) {
         fun find(text: CharSequence, query: String, checkCancelled: () -> Unit = {}): NativeSearchMatches {
             if (query.isBlank() || query.length > text.length) return Empty
             // KMP avoids quadratic work for long near-matching queries (aaaa...ab).
-            val prefix = IntArray(query.length)
-            var matched = 0
-            for (i in 1 until query.length) {
-                if ((i and 1023) == 0) checkCancelled()
-                while (matched > 0 && !query[i].equals(query[matched], ignoreCase = true)) {
-                    matched = prefix[matched - 1]
-                }
-                if (query[i].equals(query[matched], ignoreCase = true)) matched++
-                prefix[i] = matched
-            }
-            var bounds = IntArray(32)
+            val prefix = buildPrefix(query, checkCancelled)
+            var bounds = IntArray(INITIAL_BOUNDS_CAPACITY)
             var used = 0
-            matched = 0
+            var matched = 0
             for (offset in text.indices) {
-                if ((offset and 1023) == 0) checkCancelled()
+                if ((offset and CANCELLATION_CHECK_MASK) == 0) checkCancelled()
                 while (matched > 0 && !text[offset].equals(query[matched], ignoreCase = true)) {
                     matched = prefix[matched - 1]
                 }
@@ -56,6 +50,20 @@ class NativeSearchMatches private constructor(private val bounds: IntArray) {
             }
             checkCancelled()
             return if (used == 0) Empty else NativeSearchMatches(bounds.copyOf(used))
+        }
+
+        private fun buildPrefix(query: String, checkCancelled: () -> Unit): IntArray {
+            val prefix = IntArray(query.length)
+            var matched = 0
+            for (i in 1 until query.length) {
+                if ((i and CANCELLATION_CHECK_MASK) == 0) checkCancelled()
+                while (matched > 0 && !query[i].equals(query[matched], ignoreCase = true)) {
+                    matched = prefix[matched - 1]
+                }
+                if (query[i].equals(query[matched], ignoreCase = true)) matched++
+                prefix[i] = matched
+            }
+            return prefix
         }
     }
 }

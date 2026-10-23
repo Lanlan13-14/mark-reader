@@ -78,7 +78,7 @@ class NativeSearchMatchesTest {
         var checks = 0
         try {
             NativeSearchMatches.find("a".repeat(100_000), "a".repeat(50_000)) {
-                if (++checks == 2) throw IllegalStateException("cancelled")
+                if (++checks == 2) error("cancelled")
             }
             throw AssertionError("Expected cancellation")
         } catch (_: IllegalStateException) {

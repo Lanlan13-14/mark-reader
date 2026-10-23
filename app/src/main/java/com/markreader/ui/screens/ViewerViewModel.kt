@@ -538,9 +538,8 @@ class ViewerViewModel(
     /** Ignore callbacks from a closed search, old query, or another reading surface. */
     fun onWebViewSearchResult(query: String, count: Int, index: Int) {
         val state = _uiState.value
-        if (!isWebViewSearch || state.rendered !is ReaderContent.Markdown ||
-            !state.isSearchActive || state.searchQuery != query
-        ) return
+        if (!isWebViewSearch || state.rendered !is ReaderContent.Markdown) return
+        if (!state.isSearchActive || state.searchQuery != query) return
         val safeCount = count.coerceAtLeast(0)
         _uiState.value = state.copy(
             searchMatchCount = safeCount,
@@ -587,30 +586,45 @@ class ViewerViewModel(
             val latest = _uiState.value
             // Cancellation plus explicit identity guards: a completed worker must not
             // publish offsets into a replacement document, view mode or theme render.
-            if (generation != searchGeneration || latest.searchQuery != query ||
-                latest.viewMode != mode || latest.rawText !== raw || baseRendered !== rendered
-            ) return@launch
-            nativeMatches = matches
-            if (matches.size == 0) return@launch
-            val prefs = latest.userPreferences
-            val isDark = renderDarkModeOverride ?: isDarkTheme(prefs, systemDarkTheme)
-            val activeTheme = if (isDark) prefs.readerDarkTheme else prefs.readerLightTheme
-            val isSepia = activeTheme == com.markreader.data.ReaderThemePreference.Sepia
-            val passiveColor = when {
-                isDark -> 0x66FFD54F.toInt()
-                isSepia -> 0x55A85A00.toInt()
-                else -> 0x553197F5.toInt()
-            }
-            val activeColor = when {
-                isDark -> 0xCCFFD54F.toInt()
-                isSepia -> 0xDD8B4513.toInt()
-                else -> 0xFF1565C0.toInt()
-            }
-            val decoration = NativeSearchText(source, matches, 0, passiveColor, activeColor)
-            nativeDecoration = decoration
-            publishNativeDecoration(decoration, 0)
-            if (scrollToFirst) _scrollToOffset.value = matches.start(0)
+            if (generation != searchGeneration || latest.searchQuery != query) return@launch
+            if (latest.viewMode != mode || latest.rawText !== raw || baseRendered !== rendered) return@launch
+            publishNativeMatches(source, matches, latest, scrollToFirst)
         }
+    }
+
+    private fun publishNativeMatches(
+        source: CharSequence,
+        matches: NativeSearchMatches,
+        state: ViewerUiState,
+        scrollToFirst: Boolean
+    ) {
+        nativeMatches = matches
+        if (matches.size == 0) return
+        val decoration = createNativeDecoration(source, matches, state.userPreferences)
+        nativeDecoration = decoration
+        publishNativeDecoration(decoration, 0)
+        if (scrollToFirst) _scrollToOffset.value = matches.start(0)
+    }
+
+    private fun createNativeDecoration(
+        source: CharSequence,
+        matches: NativeSearchMatches,
+        prefs: UserPreferences
+    ): NativeSearchText {
+        val isDark = renderDarkModeOverride ?: isDarkTheme(prefs, systemDarkTheme)
+        val activeTheme = if (isDark) prefs.readerDarkTheme else prefs.readerLightTheme
+        val isSepia = activeTheme == com.markreader.data.ReaderThemePreference.Sepia
+        val passiveColor = when {
+            isDark -> 0x66FFD54F.toInt()
+            isSepia -> 0x55A85A00.toInt()
+            else -> 0x553197F5.toInt()
+        }
+        val activeColor = when {
+            isDark -> 0xCCFFD54F.toInt()
+            isSepia -> 0xDD8B4513.toInt()
+            else -> 0xFF1565C0.toInt()
+        }
+        return NativeSearchText(source, matches, 0, passiveColor, activeColor)
     }
 
     private fun publishNativeDecoration(decoration: NativeSearchText, index: Int) {
