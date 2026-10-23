@@ -71,7 +71,7 @@ fun WebViewReader(
     searchQuery: String = "",
     onSearchResult: (query: String, count: Int, index: Int) -> Unit = { _, _, _ -> },
     onSearchNavigationReady: (((Boolean) -> Unit)?) -> Unit = {},
-    onTocChanged: (WebViewToc) -> Unit = {},
+    onTocChange: (WebViewToc) -> Unit = {},
     onHeadingNavigationReady: (((WebViewHeading) -> Unit)?) -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -84,7 +84,7 @@ fun WebViewReader(
     val unavailable by rememberUpdatedState(onRendererUnavailable)
     val searchResult by rememberUpdatedState(onSearchResult)
     val navigationReady by rememberUpdatedState(onSearchNavigationReady)
-    val tocChanged by rememberUpdatedState(onTocChanged)
+    val tocChanged by rememberUpdatedState(onTocChange)
     val headingNavigationReady by rememberUpdatedState(onHeadingNavigationReady)
     val host = remember {
         WebViewDocumentHost(

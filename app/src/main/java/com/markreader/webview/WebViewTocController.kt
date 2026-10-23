@@ -48,7 +48,7 @@ class WebViewTocController(private val call: (String, JSONObject) -> Unit) {
             val text = item.getString("text")
             val level = item.getInt("level")
             if (slug.isEmpty() || slug.length > MAX_LABEL_CHARS || text.length > MAX_LABEL_CHARS) return null
-            if (level !in 1..6 || !seen.add(slug)) return null
+            if (level !in 1..MAX_HEADING_LEVEL || !seen.add(slug)) return null
             headings.add(WebViewHeading(slug, text, level))
         }
         val active = payload.optString("activeSlug", "")
@@ -56,6 +56,7 @@ class WebViewTocController(private val call: (String, JSONObject) -> Unit) {
     }
 
     private companion object {
+        const val MAX_HEADING_LEVEL = 6
         const val MAX_HEADINGS = 2000
         const val MAX_LABEL_CHARS = 512
         // JSON escaping can expand every label character sixfold.

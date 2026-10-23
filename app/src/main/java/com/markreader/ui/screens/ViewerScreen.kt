@@ -837,7 +837,7 @@ fun ViewerScreen(
                                 searchQuery = if (uiState.isSearchActive) uiState.searchQuery else "",
                                 onSearchResult = viewModel::onWebViewSearchResult,
                                 onSearchNavigationReady = { webViewSearchNavigation = it },
-                                onTocChanged = { webViewToc = it },
+                                onTocChange = { webViewToc = it },
                                 onHeadingNavigationReady = { headingNavigation = it },
                                 documentUri = uriString.orEmpty(),
                                 fileName = uiState.fileName,

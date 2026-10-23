@@ -211,18 +211,6 @@ export class DocumentView {
             heading.insertBefore(anchor, heading.firstChild);
         }
     }
-    /** Wrap tables so an over-wide table scrolls itself instead of the page. */
-    wrapWideTables() {
-        for (const table of this.root.querySelectorAll('table')) {
-            if (table.parentElement?.classList.contains('table-wrapper') || table.classList.contains('frontmatter')) {
-                continue;
-            }
-            const wrapper = document.createElement('div');
-            wrapper.className = 'table-wrapper';
-            table.parentNode?.insertBefore(wrapper, table);
-            wrapper.appendChild(table);
-        }
-    }
     // ------------------------------------------------------------------------ mermaid
     /** Mermaid is ~2.5MB, so it's only pulled in once a document actually contains a diagram. */
     async loadMermaid() {
