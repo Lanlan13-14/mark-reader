@@ -92,7 +92,7 @@ test('host delegates search after WebView initialization and before page load', 
   const owner = host.indexOf('private val searchController = WebViewSearchController(webView, scope)');
   assert.ok(view >= 0 && owner > view && owner < host.indexOf('webView.loadUrl(PAGE_URL)'));
   assert.match(host, /fun setSearchQuery\(query: String, onResult: \(String, Int, Int\) -> Unit\) =\s+searchController.setSearchQuery\(query, onResult\)/);
-  assert.match(host, /fun findNext\(forward: Boolean\) = searchController.findNext\(forward\)/);
+  assert.match(host, /val findNext: \(Boolean\) -> Unit = searchController::findNext/);
   assert.match(host, /destroyed = true\s+searchController.destroy\(\)\s+webView.removeJavascriptInterface/);
   assert.doesNotMatch(host, /inFlightSearch|searchGeneration|findAllAsync|setFindListener/);
 });
@@ -100,7 +100,7 @@ test('search extraction stays within function and condition complexity budgets',
   // Four-space declarations count outer-class methods, not nested bridge/client methods.
   for (const text of [host, controller]) {
     const methods = [...text.matchAll(/^    (?:private )?fun /gm)];
-    assert.ok(methods.length <= 11, `outer class has ${methods.length} functions (max 11)`);
+    assert.ok(methods.length < 11, `outer class has ${methods.length} functions (must be below 11)`);
   }
   const start = controller.slice(controller.indexOf('private fun startSearchIfReady()'));
   const guards = [...start.matchAll(/if \((.+)\) return/g)];

@@ -306,7 +306,7 @@ class WebViewDocumentHost(
         searchController.setSearchQuery(query, onResult)
 
     /** Native findNext wraps and scrolls using the existing native match cache. */
-    fun findNext(forward: Boolean) = searchController.findNext(forward)
+    val findNext: (Boolean) -> Unit = searchController::findNext
 
     fun destroy() {
         destroyed = true

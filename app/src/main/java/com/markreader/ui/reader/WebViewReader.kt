@@ -92,7 +92,7 @@ fun WebViewReader(
     restore.target = { savedScrollY.value }
 
     DisposableEffect(host) {
-        navigationReady(host::findNext)
+        navigationReady(host.findNext)
         onDispose {
             navigationReady(null)
             host.destroy()
