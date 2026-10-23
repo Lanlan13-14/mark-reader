@@ -69,6 +69,7 @@ jobs:
         run: |
           python3 -m http.server 8766 > "$RUNNER_TEMP/renderer-server.log" 2>&1 &
           PLAYWRIGHT_MODULE="$RUNNER_TEMP/renderer-tests/node_modules/playwright-core/index.mjs" node --experimental-default-type=module tests/renderer/presentation.e2e.mjs
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/renderer-tests/node_modules/playwright-core/index.mjs" node --experimental-default-type=module tests/renderer/math-toc.e2e.mjs
       - name: Save visual verification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
