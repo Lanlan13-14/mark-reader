@@ -52,7 +52,17 @@ class MarkdownFormat(private val newRenderer: (isDark: Boolean) -> MarkwonRender
 
     override val renderFailureWarningRes = R.string.viewer_warning_markdown
 
-    override suspend fun load(text: String, theme: RenderTheme): ReaderContent? = try {
+    /**
+     * The source, unchanged, for the shared renderer to draw.
+     *
+     * Nothing is parsed here and nothing can fail — which is why [renderFailureWarningRes] is
+     * now only reachable through [loadEditorPreview]. Markdown's renderer moved into the page.
+     */
+    override suspend fun load(text: String, theme: RenderTheme): ReaderContent =
+        ReaderContent.Markdown(text)
+
+    /** Markwon, until the editor preview moves onto the same renderer as the viewer. */
+    override suspend fun loadEditorPreview(text: String, theme: RenderTheme): ReaderContent? = try {
         ReaderContent.Spans(renderer(theme.isDark).render(text))
     } catch (ex: CancellationException) {
         throw ex
@@ -62,8 +72,18 @@ class MarkdownFormat(private val newRenderer: (isDark: Boolean) -> MarkwonRender
         null
     }
 
+    /**
+     * Offsets index the rendering, so a rendering this side cannot see has no offsets to give.
+     *
+     * The WebView knows where its headings are and Kotlin does not; a list built from source
+     * offsets would scroll the reader to the wrong place, or to nowhere. Better an absent table
+     * of contents than one that lies — **rebuilding it in the page is planned**, with search.
+     */
     override fun headings(text: String, content: ReaderContent): List<HeadingItem> =
-        parseHeadings(text, (content as? ReaderContent.Spans)?.spanned?.toString())
+        when (content) {
+            is ReaderContent.Spans -> parseHeadings(text, content.text.toString())
+            is ReaderContent.Markdown, is ReaderContent.Table -> emptyList()
+        }
 
     override fun invalidateRenderers() = renderers.clear()
 
@@ -72,57 +92,34 @@ class MarkdownFormat(private val newRenderer: (isDark: Boolean) -> MarkwonRender
 }
 
 /**
- * ATX headings, with each offset mapped onto [renderedText].
+ * ATX headings, with each offset mapped from the source onto [renderedText].
  *
- * The reader positions everything by offsets into the *rendered* text, so every heading has to
- * be mapped there too. A source offset is meaningless in that space: the renderer drops the
- * markup, so the two drift apart by however much markup it ate — increasingly so deeper into
- * the document, which is exactly where a wrong offset is hardest to notice.
- *
- * The mapping is a forward scan: heading text can repeat, and a cursor that only moves forward
- * keeps the second "Usage" pointing at the second one. The heading text is searched in the form
- * the renderer produced, with inline markup stripped, because `## `Zephyr Cell` 全端` renders
- * without its backticks and would otherwise never be found.
+ * The mapping is a forward scan rather than a lookup: heading text can repeat, and a cursor that
+ * only moves forward keeps the second "Usage" pointing at the second one. Where the text cannot
+ * be found the source offset is used, which is wrong by however much markup the renderer ate —
+ * but it is monotonic, so the table of contents still leads down the document.
  */
 private fun parseHeadings(markdown: String, renderedText: String?): List<HeadingItem> {
     val headings = mutableListOf<HeadingItem>()
     var sourceOffset = 0
-    var cursor = 0
+    var renderedCursor = 0
     markdown.lineSequence().forEach { line ->
         val lineStart = sourceOffset
         sourceOffset += line.length + 1
         val heading = markdownHeading(line) ?: return@forEach
-        if (renderedText.isNullOrEmpty()) {
-            // Nothing rendered to map onto: the heading is still a heading, and its source
-            // offset is the only position there is.
-            headings.add(heading.copy(offset = lineStart))
-            return@forEach
+        val found = renderedText?.indexOf(heading.text, renderedCursor) ?: -1
+        val offset = when {
+            renderedText.isNullOrEmpty() -> lineStart
+            found >= 0 -> {
+                renderedCursor = (found + heading.text.length).coerceAtMost(renderedText.length)
+                found
+            }
+            else -> lineStart.coerceAtMost(renderedText.length - 1)
         }
-        val needle = stripInlineMarkup(heading.text)
-        val found = if (needle.isEmpty()) -1 else renderedText.indexOf(needle, cursor)
-        if (found < 0) return@forEach
-        cursor = found + needle.length
-        headings.add(heading.copy(offset = found))
+        headings.add(heading.copy(offset = offset))
     }
     return headings
 }
-
-/** [text] as the renderer leaves it: inline code, emphasis and links reduced to their content. */
-private fun stripInlineMarkup(text: String): String {
-    var result = text
-    for (pattern in INLINE_MARKUP) result = result.replace(pattern, "$1")
-    return result.replace("`", "").trim()
-}
-
-/** The markup pairs a heading line can contain, reduced to their captured content. */
-private val INLINE_MARKUP = listOf(
-    Regex("\\*\\*(.+?)\\*\\*"),
-    Regex("__(.+?)__"),
-    Regex("~~(.+?)~~"),
-    Regex("\\*(.+?)\\*"),
-    Regex("_(.+?)_"),
-    Regex("\\[(.+?)]\\([^)]*\\)")
-)
 
 /** The heading on this line, with [HeadingItem.offset] left for [parseHeadings] to fill in. */
 private fun markdownHeading(line: String): HeadingItem? {

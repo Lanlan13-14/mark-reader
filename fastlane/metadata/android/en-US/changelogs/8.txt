@@ -1,1 +1,0 @@
-• Large Markdown files stay responsive. A file of a few hundred kilobytes used to stall while opening and scrolling; only the part on screen is laid out now.

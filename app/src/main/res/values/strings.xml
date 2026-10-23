@@ -89,6 +89,8 @@
     <string name="viewer_warning_binary">This file looks binary or malformed. Showing raw text.</string>
     <string name="viewer_warning_source_code">Unable to highlight this source code file. Showing raw text.</string>
     <string name="viewer_warning_markdown">Unable to render this Markdown file. Showing raw text.</string>
+    <string name="viewer_warning_webview_unavailable">The system WebView on this device cannot render formatted documents. Showing the source instead.</string>
+    <string name="viewer_warning_webview_unavailable_version">System WebView %1$s cannot render formatted documents. Update Android System WebView to fix this. Showing the source instead.</string>
 
     <!-- Editor -->
     <string name="editor_save">Save</string>

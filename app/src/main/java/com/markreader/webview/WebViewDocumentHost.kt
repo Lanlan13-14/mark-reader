@@ -17,11 +17,15 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.annotation.RequiresApi
 import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewCompat
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
 /**
@@ -76,7 +80,7 @@ import org.json.JSONObject
  * The page starts loading on construction, so it is warming while the document is still being
  * read. [destroy] must be called when the owner goes away; the WebView outlives its Activity
  * otherwise. Placing it in Compose chrome, and the scroll behaviour that goes with it, is
- * deliberately not here — see P6 in `docs/plan/README.md`.
+ * deliberately not here.
  */
 class WebViewDocumentHost(
     private val context: Context,
@@ -85,6 +89,11 @@ class WebViewDocumentHost(
     private val onDocumentRendered: (virtualPath: String) -> Unit = {},
     /** A document could not be read. [cause] is null when the path resolved to nothing. */
     private val onDocumentFailed: (virtualPath: String, cause: Throwable?) -> Unit = { _, _ -> },
+    /**
+     * The page never reported ready, so this WebView cannot run the renderer at all. Carries the
+     * WebView's version name when it is known, for a message worth reading.
+     */
+    private val onRendererUnavailable: (webViewVersion: String?) -> Unit = {},
 ) {
 
     private val space = SafPathSpace(context.contentResolver)
@@ -108,10 +117,58 @@ class WebViewDocumentHost(
 
     private var destroyed = false
 
+    // WebView callbacks carry no request ID. Serialize scans instead of replacing listeners:
+    // a late result then always belongs to inFlightSearch, never to the newest query.
+    private var searchQuery = ""
+    private var searchGeneration = 0L
+    private var inFlightSearch: Pair<Long, String>? = null
+    private var searchReady = false
+    private var searchDocumentReady = false
+    private var searchDebounce: Job? = null
+    private var searchResult: (String, Int, Int) -> Unit = { _, _, _ -> }
+    private var searchMatchCount = 0
+    private val pendingSearchNavigation = java.util.ArrayDeque<Boolean>()
+
     val webView: WebView = createWebView()
 
     init {
+        webView.setFindListener { activeIndex, count, done ->
+            if (done && !destroyed) {
+                val request = inFlightSearch
+                inFlightSearch = null
+                if (request != null && request.first == searchGeneration) {
+                    searchMatchCount = count.coerceAtLeast(0)
+                    searchResult(request.second, searchMatchCount,
+                        if (count == 0) 0 else activeIndex.coerceIn(0, count - 1))
+                }
+                if (request != null && searchQuery.isEmpty()) webView.clearMatches()
+                else if (request != null && request.first != searchGeneration) startSearchIfReady()
+                else if (pendingSearchNavigation.isNotEmpty()) findNext(pendingSearchNavigation.removeFirst())
+            }
+        }
         webView.loadUrl(PAGE_URL)
+
+        // Watch for a renderer that never starts.
+        //
+        // Behavioural, deliberately, rather than a version comparison. `ready()` fires only after
+        // the whole vendored module graph has resolved and executed, so its absence is the one
+        // signal covering every cause at once — a WebView too old for the syntax the renderer is
+        // written in, an asset that failed to load, a CSP that refused a module. A hardcoded
+        // minimum Chromium version would be a guess about *why*, and it would go stale the moment
+        // the shared renderer adopts newer syntax. It will: the floor moved to optional chaining
+        // without anyone noticing.
+        //
+        // The version is read only to make the message specific, never to decide anything.
+        scope.launch(Dispatchers.Main) {
+            val ready = withTimeoutOrNull(READY_TIMEOUT_MS) { pageReady.await() }
+            if (ready == null && !destroyed) {
+                val version = runCatching {
+                    WebViewCompat.getCurrentWebViewPackage(context)?.versionName
+                }.getOrNull()
+                Log.e(TAG, "the renderer never reported ready; WebView is $version")
+                onRendererUnavailable(version)
+            }
+        }
     }
 
     // ------------------------------------------------------------------ the path space
@@ -150,6 +207,7 @@ class WebViewDocumentHost(
         rootPath: String? = null,
         preserveScroll: Boolean = false,
     ) {
+        invalidateSearchDocument()
         scope.launch(Dispatchers.Main) {
             val read = withContext(Dispatchers.IO) {
                 runCatching { space.readText(virtualPath) }
@@ -172,6 +230,54 @@ class WebViewDocumentHost(
         }
     }
 
+    /**
+     * Renders [text] as the document at [virtualPath], without reading anything.
+     *
+     * The counterpart to [openDocument], for the caller that already has the text — which the
+     * reader does: it read and decoded the bytes itself, because the encoding, the recents entry
+     * and the resume position all hang off that read. Going through [openDocument] would decode
+     * the same file a second time, up to `MAX_FILE_BYTES` of it, and leave two copies of the
+     * document that could disagree.
+     *
+     * [virtualPath] still has to name something adopted, because that is what the document's own
+     * relative images resolve against.
+     */
+    fun showDocument(
+        virtualPath: String,
+        text: String,
+        rootPath: String? = null,
+        preserveScroll: Boolean = false,
+    ) {
+        invalidateSearchDocument()
+        scope.launch(Dispatchers.Main) {
+            pageReady.await()
+            call(
+                "showDocument",
+                JSONObject()
+                    .put("path", virtualPath)
+                    .put("text", text)
+                    .put("rootPath", rootPath ?: JSONObject.NULL)
+                    .put("preserveScroll", preserveScroll),
+            )
+        }
+    }
+
+    /**
+     * Room to leave at the top of the document for chrome drawn over the WebView, in CSS pixels
+     * (which are dp here, since the host disables zoom).
+     *
+     * Deliberately *not* an inset applied to the WebView from outside. The chrome collapses as
+     * the reader scrolls, and an outer inset would leave a dead band where it used to be; page
+     * padding scrolls away with the content, which is what the native reader gets by putting the
+     * same inset inside its `ScrollView`.
+     */
+    fun applyContentInset(topDp: Float) {
+        scope.launch(Dispatchers.Main) {
+            pageReady.await()
+            call("setContentInset", JSONObject().put("top", topDp))
+        }
+    }
+
     /** Applies reader settings. Safe before the first document; the page re-renders if it needs to. */
     fun applySettings(settings: RendererSettings) {
         scope.launch(Dispatchers.Main) {
@@ -180,8 +286,66 @@ class WebViewDocumentHost(
         }
     }
 
+    /** Debounced, latest-wins rendered-text search. All entry points run on the UI thread. */
+    fun setSearchQuery(query: String, onResult: (String, Int, Int) -> Unit) {
+        searchResult = onResult
+        if (query == searchQuery) return
+        searchQuery = query
+        scheduleSearch()
+    }
+
+    /** Native findNext wraps and scrolls using the existing native match cache. */
+    fun findNext(forward: Boolean) {
+        if (!destroyed && searchReady && searchMatchCount > 0) {
+            if (inFlightSearch != null) {
+                pendingSearchNavigation.addLast(forward)
+                return
+            }
+            // Navigation callbacks have no ID either, so give them the same generation fence.
+            inFlightSearch = searchGeneration to searchQuery
+            webView.findNext(forward)
+        }
+    }
+
+    private fun invalidateSearchDocument() {
+        searchDocumentReady = false
+        scheduleSearch()
+    }
+
+    private fun scheduleSearch() {
+        ++searchGeneration
+        pendingSearchNavigation.clear()
+        searchDebounce?.cancel()
+        searchReady = false
+        searchMatchCount = 0
+        searchResult(searchQuery, 0, 0)
+        if (searchQuery.isEmpty()) {
+            // Do not cancel an in-flight scan: its final callback is our serialization fence.
+            if (inFlightSearch == null) webView.clearMatches()
+            return
+        }
+        searchDebounce = scope.launch(Dispatchers.Main) {
+            delay(SEARCH_DEBOUNCE_MS)
+            if (!destroyed) {
+                searchReady = true
+                startSearchIfReady()
+            }
+        }
+    }
+
+    private fun startSearchIfReady() {
+        if (destroyed || !searchDocumentReady || !searchReady ||
+            inFlightSearch != null || searchQuery.isEmpty()) return
+        inFlightSearch = searchGeneration to searchQuery
+        webView.findAllAsync(searchQuery)
+    }
+
     fun destroy() {
         destroyed = true
+        searchDebounce?.cancel()
+        ++searchGeneration
+        webView.setFindListener(null)
+        webView.clearMatches()
         webView.removeJavascriptInterface(BRIDGE_NAME)
         webView.destroy()
     }
@@ -333,6 +497,13 @@ class WebViewDocumentHost(
         @JavascriptInterface
         fun rendered(virtualPath: String) = fromHostPage { onDocumentRendered(virtualPath) }
 
+        /** Called after every renderer layout, including same-document settings re-renders. */
+        @JavascriptInterface
+        fun searchRendered() = fromHostPage {
+            searchDocumentReady = true
+            scheduleSearch()
+        }
+
         @JavascriptInterface
         fun openPath(virtualPath: String) = fromHostPage { openDocument(virtualPath) }
 
@@ -351,7 +522,7 @@ class WebViewDocumentHost(
          */
         private inline fun fromHostPage(crossinline action: () -> Unit) {
             scope.launch(Dispatchers.Main) {
-                if (webView.url?.startsWith(PAGE_URL) == true) {
+                if (!destroyed && webView.url?.startsWith(PAGE_URL) == true) {
                     action()
                 }
             }
@@ -367,5 +538,15 @@ class WebViewDocumentHost(
         const val PAGE_URL = "$ORIGIN${ASSETS_PREFIX}renderer/android-host.html"
 
         const val BRIDGE_NAME = "__mdrHost"
+
+        /**
+         * How long the page gets to report ready before the renderer is called unusable.
+         *
+         * Generous on purpose. The spike measured ~1.15 s of fixed cost on a cold process start,
+         * and that was not the slowest device anyone owns — a false positive here would drop a
+         * working reader into raw text, which is far worse than waiting.
+         */
+        const val READY_TIMEOUT_MS = 10_000L
+        const val SEARCH_DEBOUNCE_MS = 200L
     }
 }

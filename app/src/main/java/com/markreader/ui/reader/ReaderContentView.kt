@@ -11,9 +11,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TableLayout
 import android.widget.TextView
-import com.markreader.data.CodeFontPreference
-import com.markreader.data.ReadingFontPreference
-import com.markreader.data.TextAlignmentPreference
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,7 +27,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.markreader.data.CodeFontPreference
+import com.markreader.data.ReadingFontPreference
+import com.markreader.data.TextAlignmentPreference
 import com.markreader.format.HeadingItem
+import com.markreader.format.ReaderContent
 
 /**
  * A [ScrollView] that never scrolls itself to keep a focused descendant on screen.
@@ -82,7 +83,7 @@ private class FocusStableScrollView(context: Context) : ScrollView(context) {
 
 @Composable
 fun RenderedTextView(
-    text: Any,
+    content: ReaderContent,
     textColor: Int,
     padding: PaddingValues,
     /**
@@ -98,7 +99,6 @@ fun RenderedTextView(
     // only ever read to restore a position, so it is read without snapshot
     // observation below.
     savedScrollY: State<Int>,
-    search: State<ReaderSearch> = NO_SEARCH,
     scrollToOffset: Int?,
     onScrollChanged: (scrollY: Int, maxScrollY: Int) -> Unit,
     onScrollExtentChanged: (maxScrollY: Int) -> Unit,
@@ -115,10 +115,17 @@ fun RenderedTextView(
     textAlignment: TextAlignmentPreference,
     codeBlockBackgroundColor: Int
 ) {
-    // A long rendered document is read through a window: only the chunks near the viewport are
-    // real views, and the rest are spacers. Short documents, raw text and the editor preview
-    // stay on the single TextView, which is cheaper when there is nothing to window.
-    val windowed = text is Spanned && text.length > ReadingWindow.WINDOW_THRESHOLD_CHARS
+    // This view draws text and nothing else. Callers route the other two elsewhere —
+    // [ReaderContent.Markdown] to [WebViewReader], and [ReaderContent.Table] to a native table
+    // once one is written — so neither arm should be reachable. They are spelled out rather than
+    // hidden behind an `else` so that a fourth shape still cannot be added without deciding what
+    // happens here, and they draw nothing rather than throwing: a mis-routed document is a blank
+    // reader, not a crashed one.
+    val searchDecoration = (content as? ReaderContent.Spans)?.text as? NativeSearchText
+    val text: CharSequence = searchDecoration?.source ?: when (content) {
+        is ReaderContent.Spans -> content.text
+        is ReaderContent.Markdown, is ReaderContent.Table -> ""
+    }
     val contentKey = remember(text, fontSizeSp, lineHeight, readingFont, codeFont, isMonospaced, textAlignment) {
         ContentKey(
             textHash = text.hashCode(),
@@ -130,13 +137,17 @@ fun RenderedTextView(
             textAlignment = textAlignment
         )
     }
+    // Split mode gives code blocks and tables their own horizontally scrollable views, and it
+    // is driven by the marker spans the renderer left behind — so unstyled text can never be in
+    // it. That is the one place the narrowing genuinely belongs: not "what could this be", but
+    // "does this carry the markers the splitter reads".
+    val markers = text as? Spanned
     // Span scans over the whole document — cached per text, never per frame.
-    val docHasCodeBlocks = remember(text) { text is Spanned && hasCodeBlocks(text) }
-    val docHasTables = remember(text) { text is Spanned && hasTables(text) }
-    // Split mode gives code blocks and tables their own horizontally scrollable
-    // views. Only worth the cost when the document actually contains one.
-    val isSplitMode = remember(text, isCodeBlockWrapEnabled, docHasCodeBlocks, docHasTables) {
-        text is Spanned && ((!isCodeBlockWrapEnabled && docHasCodeBlocks) || docHasTables)
+    val docHasCodeBlocks = remember(markers) { markers != null && hasCodeBlocks(markers) }
+    val docHasTables = remember(markers) { markers != null && hasTables(markers) }
+    // Only worth the cost when the document actually contains one.
+    val isSplitMode = remember(markers, isCodeBlockWrapEnabled, docHasCodeBlocks, docHasTables) {
+        markers != null && ((!isCodeBlockWrapEnabled && docHasCodeBlocks) || docHasTables)
     }
     val restoreKey = remember(contentKey, isCodeBlockWrapEnabled) {
         RestoreKey(contentKey, isCodeBlockWrapEnabled)
@@ -200,23 +211,10 @@ fun RenderedTextView(
                         )
                     }
                     setOnScrollChangeListener { _, _, scrollY, _, _ ->
-                        val host = controller.windowHost
-                        if (host != null) {
-                            val density = resources.displayMetrics.density
-                            val contentTopPx = (16 * density).toInt() +
-                                (controller.contentTopInsetDp * density).toInt()
-                            host.sync(scrollY, height, contentTopPx)
-                            onScrollChanged(scrollY, host.totalHeight().coerceAtLeast(computeMaxScrollY(this)))
-                        } else {
-                            onScrollChanged(scrollY, computeMaxScrollY(this))
-                        }
+                        onScrollChanged(scrollY, computeMaxScrollY(this))
                         val list = currentHeadings
                         if (list.isEmpty()) return@setOnScrollChangeListener
                         val firstChild = getChildAt(0) ?: return@setOnScrollChangeListener
-                        if (host != null) {
-                            onActiveHeadingChangedState(host.activeHeading(list, scrollY))
-                            return@setOnScrollChangeListener
-                        }
                         if (firstChild is LinearLayout) {
                             onActiveHeadingChangedState(
                                 findActiveHeadingInSplit(
@@ -330,35 +328,12 @@ fun RenderedTextView(
                 }
 
                 // Text / style updates
-                if (scrollView.getChildAt(0) == null) return@AndroidView
+                val currentChild = scrollView.getChildAt(0) ?: return@AndroidView
 
-                if (windowed && text is Spanned) {
-                    updateWindow(
-                        scrollView, controller, text,
-                        chunkStyleOf(
-                            ChunkColors(textColor, selectionHighlightColor, codeBlockBackgroundColor),
-                            ChunkTypography(
-                                fontSizeSp, lineHeight, readingFont, codeFont, isMonospaced,
-                                textAlignment, isCodeBlockWrapEnabled, density
-                            )
-                        ),
-                        contentKey,
-                        SearchPaint(
-                            search.value.matches, search.value.index, search.value.palette,
-                            contentTopInset.value, contentTopPx, paddingPx
-                        )
-                    )
-                } else if (controller.windowHost != null) {
-                    leaveWindow(scrollView, controller)
-                }
-
-                val resolvedChild = scrollView.getChildAt(0)
-                if (controller.windowHost != null || resolvedChild == null) {
-                    // The window owns its children; the branches below build the single view.
-                } else if (resolvedChild is LinearLayout) {
+                if (currentChild is LinearLayout) {
                     // Split mode
-                    val container = resolvedChild
-                    val spanned = text as Spanned
+                    val container = currentChild
+                    val spanned = markers ?: return@AndroidView
                     val textRefChanged = spanned !== controller.lastTextRef
                     val textHash = if (textRefChanged || controller.lastTextHash == 0) {
                         spanned.toString().hashCode()
@@ -561,26 +536,25 @@ fun RenderedTextView(
                     }
                 } else {
                     // Single-TV mode
-                    val textView = resolvedChild as TextView
+                    val textView = currentChild as TextView
 
-                    when (text) {
-                        is Spanned -> {
-                            if (text !== controller.lastTextRef) {
-                                textView.text = text
-                                controller.lastTextHash = text.toString().hashCode()
-                                controller.lastTextRef = text
-                            }
+                    if (markers != null) {
+                        // Spans can change while the string does not — a search highlight
+                        // re-render is exactly that — so identity is the only safe test.
+                        if (text !== controller.lastTextRef) {
+                            textView.text = text
+                            controller.lastTextHash = text.toString().hashCode()
+                            controller.lastTextRef = text
                         }
-                        else -> {
-                            if (text !== controller.lastTextRef) {
-                                val textHash = text.hashCode()
-                                if (textHash != controller.lastTextHash) {
-                                    textView.text = text.toString()
-                                    controller.lastTextHash = textHash
-                                }
-                                controller.lastTextRef = text
-                            }
+                    } else if (text !== controller.lastTextRef) {
+                        // Nothing but characters, so equal content is the same render — and
+                        // no Spannable is allocated to draw it.
+                        val textHash = text.hashCode()
+                        if (textHash != controller.lastTextHash) {
+                            textView.text = text.toString()
+                            controller.lastTextHash = textHash
                         }
+                        controller.lastTextRef = text
                     }
                     if (controller.lastStyleKey != contentKey) {
                         applyStyleToTextView(
@@ -599,6 +573,18 @@ fun RenderedTextView(
                     }
                 }
 
+                // Search changes invalidate drawing only: never replace text, its spans,
+                // selection or Layout when moving between cached matches.
+                if (currentChild is SearchHighlightTextView) {
+                    currentChild.setSearchDecoration(searchDecoration)
+                } else if (currentChild is LinearLayout) {
+                    for (i in 0 until currentChild.childCount.coerceAtMost(controller.splitBoundaries.size)) {
+                        val boundary = controller.splitBoundaries[i]
+                        (extractTextView(currentChild.getChildAt(i)) as? SearchHighlightTextView)
+                            ?.setSearchDecoration(searchDecoration, boundary.start)
+                    }
+                }
+
                 // Scroll handling. Every branch claims restoreKey synchronously,
                 // before posting, so that a later pass through this block cannot
                 // queue a second, conflicting restore behind the one in flight.
@@ -607,8 +593,9 @@ fun RenderedTextView(
                     controller.pendingAnchorOffset = null
                     controller.lastRestoredKey = restoreKey
                     scrollView.post {
-                        val y = controller.windowHost?.scrollYFor(targetOffset)
-                            ?: resolveScrollY(scrollView, controller.splitBoundaries, targetOffset)
+                        val y = resolveScrollY(
+                            scrollView, controller.splitBoundaries, targetOffset
+                        )
                         // Unresolvable anchor — hold position rather than jumping.
                         if (y != null) scrollView.smoothScrollTo(0, y)
                     }
@@ -624,34 +611,17 @@ fun RenderedTextView(
 
                 if (scrollToOffset != null) {
                     controller.lastRestoredKey = restoreKey
-                    val host = controller.windowHost
-                    host?.beginJump()
-                    if (host == null) {
-                        scrollView.post {
-                            val y = resolveScrollY(scrollView, controller.splitBoundaries, scrollToOffset)
-                            if (y != null) {
-                                val centered = (y - scrollView.height / JUMP_VIEWPORT_DIVISOR).coerceAtLeast(0)
-                                scrollView.smoothScrollTo(0, centered)
-                            }
-                            onScrollConsumed()
-                        }
-                    } else {
-                        val searchPaint = SearchPaint(
-                            search.value.matches, search.value.index, search.value.palette,
-                            contentTopInset.value, contentTopPx, paddingPx
+                    scrollView.post {
+                        val y = resolveScrollY(
+                            scrollView, controller.splitBoundaries, scrollToOffset
                         )
-                        val windowStyle = chunkStyleOf(
-                            ChunkColors(textColor, selectionHighlightColor, codeBlockBackgroundColor),
-                            ChunkTypography(
-                                fontSizeSp, lineHeight, readingFont, codeFont, isMonospaced,
-                                textAlignment, isCodeBlockWrapEnabled, density
-                            )
-                        )
-                        val windowText = text as android.text.Spanned
-                        scrollToWindowOffset(scrollView, host, scrollToOffset) {
-                            updateWindow(scrollView, controller, windowText, windowStyle, contentKey, searchPaint)
-                            scrollToWindowOffset(scrollView, host, scrollToOffset, onScrollConsumed = onScrollConsumed)
+                        if (y != null) {
+                            val centeredY = (y - scrollView.height / 3).coerceAtLeast(0)
+                            scrollView.smoothScrollTo(0, centeredY)
                         }
+                        // Consumed either way, so an unresolvable target does not
+                        // leave the request pending forever.
+                        onScrollConsumed()
                     }
                 }
 
@@ -681,7 +651,6 @@ fun RenderedTextView(
                 }
             },
             onRelease = { scrollView ->
-                controller.windowHost = null
                 controller.extentListener?.let { listener ->
                     scrollView.viewTreeObserver?.removeOnGlobalLayoutListener(listener)
                     controller.extentListener = null
@@ -689,110 +658,4 @@ fun RenderedTextView(
             }
         )
     }
-}
-
-
-private fun updateWindow(
-    scrollView: android.widget.ScrollView,
-    controller: ReaderContentController,
-    text: android.text.Spanned,
-    style: ChunkStyle,
-    contentKey: ContentKey,
-    search: SearchPaint
-) {
-    val host = controller.windowHost ?: WindowedReaderHost(
-        scrollView.context, scrollView, search.paddingPx
-    ).also { created ->
-        controller.windowHost = created
-        scrollView.removeAllViews()
-        scrollView.addView(created.container, matchParentWrap())
-    }
-    controller.contentTopInsetDp = search.contentTopInsetDp
-    host.setText(text, style)
-    host.sync(scrollView.scrollY, scrollView.height, search.contentTopPx)
-    paintSearch(host, controller, search.matches, search.index, search.palette)
-    controller.lastTextRef = text
-    controller.lastStyleKey = contentKey
-    controller.lastTextColor = style.colors.text
-    controller.lastSelectionHighlightColor = style.colors.selection
-    controller.lastCodeBlockBackgroundColor = style.colors.codeBackground
-}
-
-private fun leaveWindow(scrollView: android.widget.ScrollView, controller: ReaderContentController) {
-    controller.pendingAnchorOffset = controller.windowHost?.anchorAt(scrollView.scrollY)
-    controller.windowHost = null
-    scrollView.removeAllViews()
-    controller.lastTextHash = 0
-    controller.lastTextRef = null
-}
-
-/** No query. A constant, so the default does not allocate a new state on every recomposition. */
-private val NO_SEARCH: State<ReaderSearch> =
-    object : State<ReaderSearch> {
-        override val value = ReaderSearch(null, 0, SearchPalette(0, 0, 0))
-    }
-
-/** A search as the reader consumes it: the positions, the current one, and its colours. */
-class ReaderSearch(
-    val matches: SearchMatches?,
-    val index: Int,
-    val palette: SearchPalette
-)
-
-/** The search and the two insets the window needs, grouped so the call stays short. */
-private class SearchPaint(
-    val matches: SearchMatches?,
-    val index: Int,
-    val palette: SearchPalette,
-    val contentTopInsetDp: Float,
-    val contentTopPx: Int,
-    val paddingPx: Int
-)
-
-private fun matchParentWrap() = android.view.ViewGroup.LayoutParams(
-    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-)
-
-/**
- * Scrolls a windowed document to [offset].
- *
- * The position is exact when the chunk holding the offset is mounted and laid out, and otherwise
- * a density-calibrated estimate; [WindowedReaderHost.scrollYFor] decides which. When it
- * estimated, it posts [onEstimated] so the caller can re-ask after the estimate has had a
- * layout pass to mount and lay out the target chunk, then land exactly on it.
- */
-private fun scrollToWindowOffset(
-    scrollView: android.widget.ScrollView,
-    host: WindowedReaderHost,
-    deviceOffset: Int,
-    onEstimated: (() -> Unit)? = null,
-    onScrollConsumed: () -> Unit
-) {
-    val y = host.scrollYFor(deviceOffset) { onEstimated?.invoke() }
-    val centered = (y - scrollView.height / JUMP_VIEWPORT_DIVISOR).coerceAtLeast(0)
-    // An estimate means the target is far away and its chunk is not mounted. Moving there
-    // instantly mounts it on this very frame, so the refinement one frame later reads the
-    // exact line; animating instead would burn the whole refine budget on frames where the
-    // target is still off-screen, and the jump would land on the estimate.
-    if (host.lastAnswerWasEstimate) scrollView.scrollTo(0, centered)
-    else scrollView.smoothScrollTo(0, centered)
-    onScrollConsumed()
-}
-
-/** Puts the target a third of the way down the screen instead of under the top bar. */
-private const val JUMP_VIEWPORT_DIVISOR = 3
-
-/** Repaints when the query or the current match changed, and not on every scroll frame. */
-private fun paintSearch(
-    host: WindowedReaderHost,
-    controller: ReaderContentController,
-    matches: SearchMatches?,
-    index: Int,
-    palette: SearchPalette
-) {
-    if (controller.paintedSearch === matches && controller.paintedSearchIndex == index) return
-    host.applySearch(matches, index, palette)
-    controller.paintedSearch = matches
-    controller.paintedSearchIndex = index
 }

@@ -1,0 +1,1 @@
+Restore upstream reader features and settings while retaining automatic signing. Improve search responsiveness and cached result navigation. Support offline mathematical notation, including bare TeX in prose.

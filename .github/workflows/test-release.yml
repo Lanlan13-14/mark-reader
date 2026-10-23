@@ -23,9 +23,18 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
 
+      - name: Test before building
+        run: ./gradlew test
+
+      - name: Read application version
+        run: |
+          VERSION=$(python3 -c 'import re; print(re.search(r"versionName\s*=\s*\"([^\"]+)\"", open("app/build.gradle.kts").read()).group(1))')
+          echo "TEST_TAG=v$VERSION-test" >> "$GITHUB_ENV"
+
       - name: Create a throwaway signing key
         run: |
           PASSWORD=$(openssl rand -base64 24)
+          echo "::add-mask::$PASSWORD"
           keytool -genkeypair -keystore "$RUNNER_TEMP/test.jks" -storetype PKCS12 \
             -alias markreader -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass "$PASSWORD" -keypass "$PASSWORD" -dname "CN=Mark Reader test"
@@ -38,15 +47,15 @@ jobs:
         run: ./gradlew assembleRelease
 
       - name: Rename APK
-        run: mv app/build/outputs/apk/release/*.apk app/build/outputs/apk/release/mark-reader-v1.0.7-test.apk
+        run: mv app/build/outputs/apk/release/*.apk app/build/outputs/apk/release/mark-reader-${{ env.TEST_TAG }}.apk
 
       - name: Publish the test release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: v1.0.7-test
-          name: v1.0.7-test
+          tag_name: ${{ env.TEST_TAG }}
+          name: ${{ env.TEST_TAG }}
           body: |
-            Test build of 1.0.7, signed with a throwaway key generated during this build.
+            Test build ${{ env.TEST_TAG }}, signed with a throwaway key generated during this build.
             It installs for testing, but it cannot update an install that was signed with the upstream key.
-          files: app/build/outputs/apk/release/mark-reader-v1.0.7-test.apk
+          files: app/build/outputs/apk/release/mark-reader-${{ env.TEST_TAG }}.apk
           prerelease: true

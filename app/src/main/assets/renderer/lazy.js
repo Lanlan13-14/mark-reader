@@ -21,6 +21,7 @@
  *  generosity, not the tightness.
  *--------------------------------------------------------------------------------------------*/
 import { getConfig } from './config.js';
+import { hasTexSyntax } from './math.js';
 import { isMathPluginLoaded, loadMathPlugin } from './plugins.js';
 let highlighter;
 /** The highlighter, if a document has needed it yet. The engine falls back to escaped text. */
@@ -36,7 +37,7 @@ export function getHighlighter() {
  * output — so a document with a price in it loads KaTeX, and one with no `$` anywhere does not.
  */
 function needsMath(text) {
-    return text.includes('$') || /^\s*(```|~~~)\s*math/m.test(text);
+    return text.includes('$') || hasTexSyntax(text) || /^\s*(```|~~~)\s*math/m.test(text);
 }
 /**
  * A fence, or front matter — which the `codeBlock` render style highlights as YAML.

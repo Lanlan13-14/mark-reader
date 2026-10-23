@@ -68,7 +68,7 @@ internal class ReaderContentController(
 
     /** Content identity of the text currently applied to the views. */
     var lastTextHash: Int = 0
-    var lastTextRef: Any? = null
+    var lastTextRef: CharSequence? = null
 
     /** Styling currently applied to the views. */
     var lastStyleKey: ContentKey = UNSTYLED
@@ -78,21 +78,6 @@ internal class ReaderContentController(
 
     /** Segment ranges the split container's children were built from. */
     var splitBoundaries: List<Segment> = emptyList()
-
-    /**
-     * Set while the document is large enough to be read through a window. The scroll listener
-     * and the update pass both touch it, and both run on the main thread.
-     */
-    var windowHost: WindowedReaderHost? = null
-
-    /** Chrome inset in dp, read by the scroll listener which has no Compose state of its own. */
-    var contentTopInsetDp: Float = 0f
-
-    /** The query currently painted. Compared by identity so a repeat search is not repainted. */
-    var paintedSearch: com.markreader.ui.reader.SearchMatches? = null
-
-    /** Index of the match drawn as the current one. */
-    var paintedSearchIndex: Int = -1
 
     /**
      * The global-layout listener reporting scroll extent, held so it can be
