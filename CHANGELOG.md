@@ -3,6 +3,18 @@
 All notable changes to MarkReader are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.0.9] - 2026-10-23
+
+### Fixed
+- Restore the Markdown contents button and six-level outline, navigating by actual rendered heading identities and current DOM geometry.
+- Correct fenced-code highlighting classes and restore real offline reading/code fonts and code-font preference mapping.
+- Copy code through acknowledged native clipboard writes, preserving whitespace; expose accessible per-block wrap and copy controls.
+- Improve table borders, column sizing, alignment and local scrolling on narrow screens without horizontal page overflow.
+- Render bare powers/subscripts and mathematical relations, text/font command arguments and multiline display math; preserve prose after unclosed delimiters and avoid repeated malformed-input scans.
+
+### Verification
+- Add remote browser interaction checks at phone/desktop widths and in light/dark themes, including copy failure, wrapping, font loading, formula boundaries and layout-shift-resistant heading jumps.
+
 ## [1.0.8] - 2026-10-23
 
 ### Changed

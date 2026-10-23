@@ -1,0 +1,1 @@
+Restore Markdown contents navigation using real headings. Improve responsive tables, syntax-highlighted code, offline fonts, copy and wrap controls. Expand formula recognition and multiline math while preserving prose and code. Add phone/desktop light/dark browser interaction regression tests.

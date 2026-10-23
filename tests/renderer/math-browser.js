@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+import { mathBoundaries } from './fixtures/math-boundaries.js';
 import { runMathTests } from './math-suite.js';
 import { setDocumentHtml } from '../../app/src/main/assets/renderer/sanitizer.js';
 import { MarkdownItEngine } from '../../app/src/main/assets/renderer/engine.js';
@@ -25,6 +26,22 @@ try {
     const originalVisible = originalRoot.cloneNode(true);
     originalVisible.querySelectorAll('pre,code,.katex').forEach(node => node.remove());
     assert(!/\\(?:[A-Za-z]+|%)/.test(originalVisible.textContent), 'original prose has no leftover TeX');
+    const boundaryRoot = document.createElement('section');
+    root.after(boundaryRoot);
+    for (const [name, source, expected, prose] of mathBoundaries) {
+        const renderedBoundary = engine.render(source).html;
+        const beforeSanitizing = document.createElement('template');
+        beforeSanitizing.innerHTML = renderedBoundary;
+        assert(JSON.stringify([...beforeSanitizing.content.querySelectorAll('annotation')].map(node => node.textContent)) === JSON.stringify(expected), `${name}: engine preserves exact annotations`);
+        setDocumentHtml(boundaryRoot, renderedBoundary);
+        assert(boundaryRoot.querySelectorAll('.katex').length === expected.length, `${name}: sanitizer retains all formulas`);
+        assert(!boundaryRoot.querySelector('.katex-error'), `${name}: production rendering valid`);
+        const visible = boundaryRoot.cloneNode(true);
+        visible.querySelectorAll('.katex,pre,code').forEach(node => node.remove());
+        // Cell layout supplies whitespace absent from token content.
+        assert(visible.textContent.replace(/\s/g, '') === prose.replace(/\s/g, ''), `${name}: production DOM preserves prose`);
+    }
+    boundaryRoot.remove();
     const unsafe = document.createElement('div');
     setDocumentHtml(unsafe, '<script>alert(1)</script><img src=x onerror="alert(1)"><iframe src="https://example.org"></iframe><a href="javascript:alert(1)">bad</a><style>body{display:none}</style>');
     assert(!unsafe.querySelector('script,iframe,style,[onerror],[href^="javascript:"]'), 'sanitizer still blocks executable HTML');
@@ -38,7 +55,7 @@ try {
     assert(loaded.some(font => font.family === 'KaTeX_Main'), 'offline Main font actually loaded');
     assert(loaded.some(font => font.family === 'KaTeX_Math'), 'offline Math font actually loaded');
     assert(root.querySelector('.katex').getBoundingClientRect().height > 10, 'formula has real layout');
-    window.mathTestResult = { passed: true, assertions: count + 9, formulas: 13, originalFormulas: originalRoot.querySelectorAll('.katex').length, preservedCodeBlocks: originalRoot.querySelectorAll('pre').length, loadedFonts: loaded.map(f => f.family) };
+    window.mathTestResult = { passed: true, assertions: count + 11 + mathBoundaries.length * 4, formulas: 13, originalFormulas: originalRoot.querySelectorAll('.katex').length, preservedCodeBlocks: originalRoot.querySelectorAll('pre').length, loadedFonts: loaded.map(f => f.family) };
     result.textContent = JSON.stringify(window.mathTestResult, null, 2);
 } catch (error) {
     window.mathTestResult = { passed: false, error: error.stack };

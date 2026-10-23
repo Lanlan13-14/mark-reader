@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Shared Node/browser suite: no npm installation or build required.
+import { mathBoundaries } from './fixtures/math-boundaries.js';
 import MarkdownIt from '../../app/src/main/assets/renderer/vendor/markdown-it.js';
 import { loadMathPlugin, getPlugins } from '../../app/src/main/assets/renderer/plugins.js';
 import { detectDocumentNeeds } from '../../app/src/main/assets/renderer/lazy.js';
@@ -29,8 +30,26 @@ export async function runMathTests(assert, fixture, original = '') {
         check(!math(source).includes('katex-error'), `valid rendering: ${source}`);
         check(detectDocumentNeeds(source).math, `lazy detection: ${source}`);
     }
+    const decode = text => text.replace(/&#(?:x([0-9a-f]+)|(\d+));|&(amp|lt|gt|quot);/gi, (all, hex, dec, named) => hex || dec ? String.fromCodePoint(parseInt(hex || dec, hex ? 16 : 10)) : ({ amp: '&', lt: '<', gt: '>', quot: '"' }[named]));
+    const plainTokens = tokens => tokens.map(token => token.children ? plainTokens(token.children) : ['text', 'code_inline'].includes(token.type) ? token.content : ['softbreak', 'hardbreak'].includes(token.type) ? ' ' : '').join('');
+    const normalized = text => text.replace(/\s+/g, ' ').trim();
+    for (const [name, source, expected, prose] of mathBoundaries) {
+        const html = math(source);
+        check(JSON.stringify(annotations(source).map(decode)) === JSON.stringify(expected), `${name}: full annotations ${JSON.stringify(annotations(source).map(decode))}`);
+        check(!html.includes('katex-error'), `${name}: no KaTeX error`);
+        const plain = plainTokens(md.parse(source, {}));
+        check(normalized(plain) === normalized(prose), `${name}: prose preserved ${JSON.stringify(plain)}`);
+        if (expected.length) {
+            check(!/\\(?:[A-Za-z]+|%)/.test(plain), `${name}: no raw TeX outside mathematics`);
+            check(detectDocumentNeeds(source).math, `${name}: lazy load includes ASCII math`);
+        }
+    }
     for (const source of [String.raw`code: \unknown`, 'Price $5 and $10.', '$5.00, $10.00', String.raw`\$5 and \$10`, '`$x$ \\alpha`', '```tex\n\\alpha\n```', String.raw`[\alpha](https://example.org/a)`, String.raw`<https://example.org/\alpha>`, 'ordinary prose, a+b=2 and f(x)', String.raw`C:\Users\name`, String.raw`\\alpha`]) {
         check(!math(source).includes('class="katex"'), `preserve non-math: ${source}`);
+    }
+    const literalMd = MarkdownIt({ html: true, linkify: true });
+    for (const source of ['Price $5 and $10.', '$5.00, $10.00', String.raw`\$5 and \$10`, '`i^2 = -1 \\alpha`', '```tex\ni^2 = -1\n\\alpha\n```', String.raw`[i^2 = -1 \alpha](https://example.org/a?q=x_1)`, String.raw`<https://example.org/x_1>`, String.raw`C:\Users\name`, String.raw`\\alpha`, 'ordinary prose, a+b=2 and f(x)']) {
+        check(math(source) === literalMd.render(source), `literal/code/currency/link unchanged: ${source}`);
     }
     check(math('[ordinary](https://example.org/a?q=1)').includes('href="https://example.org/a?q=1"'), 'link target preserved');
     check(math('`\\alpha`').includes('<code>\\alpha</code>'), 'inline code preserved');
