@@ -51,6 +51,10 @@ export async function runMathTests(assert, fixture, original = '') {
         check(!/\\(?:[A-Za-z]+|%)/.test(visible), `original eight answers leave no unrendered TeX: ${visible.match(/.{0,30}\\(?:[A-Za-z]+|%).{0,30}/g)}`);
         check(annotations(original).includes(String.raw`f&#x27;(x) = \frac{1}{x} + e^{-x}`), 'original derivative is complete');
         check(annotations(original).includes(String.raw`1 - 70\% = 30\% = 0.3`), 'original probability percent equation complete');
+        check(annotations(original).includes(String.raw`g&#x27;&#x27;(x) = 0 \implies x_0 = \frac{1}{2}`), 'malformed copied-list derivative renders completely');
+        check(!originalHtml.includes('<pre>'), 'copied prose artifacts are not displayed as code');
+        check(math('    \\alpha\n').includes('<pre><code>\\alpha'), 'ordinary indented code remains literal');
+        check(math('```text\n *      * 令 \\alpha\n```').includes('<pre><code'), 'explicit fenced prose stays code');
     }
     return { count, html };
 }

@@ -8,7 +8,8 @@ const result = document.querySelector('#result');
 try {
     const assert = (value, message) => { if (!value) throw new Error(message); };
     const fixture = await (await fetch('./fixtures/eight-questions.md')).text();
-    const { count } = await runMathTests(assert, fixture);
+    const original = await (await fetch('./fixtures/user-eight-answers.md')).text();
+    const { count } = await runMathTests(assert, fixture, original);
     // Exercise the real engine and unchanged production sanitizer, not a parallel DOM path.
     const engine = new MarkdownItEngine(getPlugins());
     const root = document.querySelector('#document');
@@ -17,6 +18,13 @@ try {
     assert(root.querySelectorAll('.katex').length === 13, 'sanitizer retains thirteen formulas');
     assert(root.querySelectorAll('math').length === 13, 'sanitizer retains MathML');
     assert(!root.querySelector('.katex-error'), 'production engine has no formula errors');
+    const originalRoot = document.createElement('section');
+    root.after(originalRoot);
+    setDocumentHtml(originalRoot, engine.render(original).html);
+    assert(!originalRoot.querySelector('.katex-error'), 'original answers render through production sanitizer');
+    const originalVisible = originalRoot.cloneNode(true);
+    originalVisible.querySelectorAll('pre,code,.katex').forEach(node => node.remove());
+    assert(!/\\(?:[A-Za-z]+|%)/.test(originalVisible.textContent), 'original prose has no leftover TeX');
     const unsafe = document.createElement('div');
     setDocumentHtml(unsafe, '<script>alert(1)</script><img src=x onerror="alert(1)"><iframe src="https://example.org"></iframe><a href="javascript:alert(1)">bad</a><style>body{display:none}</style>');
     assert(!unsafe.querySelector('script,iframe,style,[onerror],[href^="javascript:"]'), 'sanitizer still blocks executable HTML');
@@ -30,7 +38,7 @@ try {
     assert(loaded.some(font => font.family === 'KaTeX_Main'), 'offline Main font actually loaded');
     assert(loaded.some(font => font.family === 'KaTeX_Math'), 'offline Math font actually loaded');
     assert(root.querySelector('.katex').getBoundingClientRect().height > 10, 'formula has real layout');
-    window.mathTestResult = { passed: true, assertions: count + 7, formulas: 13, loadedFonts: loaded.map(f => f.family) };
+    window.mathTestResult = { passed: true, assertions: count + 9, formulas: 13, originalFormulas: originalRoot.querySelectorAll('.katex').length, preservedCodeBlocks: originalRoot.querySelectorAll('pre').length, loadedFonts: loaded.map(f => f.family) };
     result.textContent = JSON.stringify(window.mathTestResult, null, 2);
 } catch (error) {
     window.mathTestResult = { passed: false, error: error.stack };

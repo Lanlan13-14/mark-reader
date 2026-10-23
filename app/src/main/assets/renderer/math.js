@@ -141,5 +141,21 @@ export function extendedMathPlugin(md) {
     md.inline.ruler.before('escape', 'tex-delimiters', explicitTex);
     md.inline.ruler.before('text', 'bare-tex', bareTex);
     md.inline.ruler.at('math_inline', dollars);
+    // Copied answer sheets sometimes contain repeated list markers indented far enough
+    // that CommonMark calls the line code. Recover only this unmistakable prose artifact;
+    // fenced code, ordinary indented code and inline code remain literal.
+    const renderCode = md.renderer.rules.code_block;
+    md.renderer.rules.code_block = (tokens, index, options, env, renderer) => {
+        const source = tokens[index].content;
+        const lines = source.trimEnd().split('\n');
+        const copiedListProse = lines.length > 0 && lines.every(line =>
+            /^\s*(?:\*\s+){2,}[\u3400-\u9fff]/u.test(line));
+        if (copiedListProse) {
+            return '<p class="copied-list-prose">' + lines.map(line =>
+                md.renderInline(line.replace(/^\s*(?:\*\s+){2,}/, ''), env)).join('<br>') + '</p>\n';
+        }
+        return renderCode ? renderCode(tokens, index, options, env, renderer)
+            : renderer.renderToken(tokens, index, options);
+    };
     return md;
 }
