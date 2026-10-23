@@ -21,8 +21,6 @@ import androidx.webkit.WebViewCompat
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -117,35 +115,52 @@ class WebViewDocumentHost(
 
     private var destroyed = false
 
-    // WebView callbacks carry no request ID. Serialize scans instead of replacing listeners:
-    // a late result then always belongs to inFlightSearch, never to the newest query.
-    private var searchQuery = ""
-    private var searchGeneration = 0L
-    private var inFlightSearch: Pair<Long, String>? = null
-    private var searchReady = false
-    private var searchDocumentReady = false
-    private var searchDebounce: Job? = null
-    private var searchResult: (String, Int, Int) -> Unit = { _, _, _ -> }
-    private var searchMatchCount = 0
-    private val pendingSearchNavigation = java.util.ArrayDeque<Boolean>()
+    @SuppressLint("SetJavaScriptEnabled") // The point of option 3; see the class comment.
+    val webView: WebView = run {
+        if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            // What the three device checks owed before the first option-3 release are run with.
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
 
-    val webView: WebView = createWebView()
+        WebView(context).apply {
+            // On, and only here. ExportManager keeps it false for PDF export, over HTML it built
+            // itself from commonmark; these two WebViews want opposite settings.
+            settings.javaScriptEnabled = true
+
+            // Everything local is reachable through the asset loader or not at all. The two
+            // file-URL settings are no-ops from API 30 but minSdk is 24.
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            @Suppress("DEPRECATION")
+            settings.allowFileAccessFromFileURLs = false
+            @Suppress("DEPRECATION")
+            settings.allowUniversalAccessFromFileURLs = false
+
+            // The page stores nothing. Reading state is the app's, in DataStore.
+            settings.domStorageEnabled = false
+            settings.setGeolocationEnabled(false)
+            settings.mediaPlaybackRequiresUserGesture = true
+
+            // Pinch zoom was removed from the reader deliberately; the WebView follows.
+            settings.setSupportZoom(false)
+            settings.builtInZoomControls = false
+
+            // `textZoom` is deliberately left alone: it is where the platform's font-size
+            // accessibility setting lands, and pinning it to 100 would discard that.
+
+            // `blockNetworkLoads` is deliberately not set. It would be belt over the braces of
+            // having no INTERNET permission at all, and it is one more thing that could turn the
+            // asset-loader origin into a blank page on some WebView build.
+
+            webViewClient = HostPageClient()
+            webChromeClient = HostPageChromeClient()
+            addJavascriptInterface(Bridge(), BRIDGE_NAME)
+        }
+    }
+
+    private val searchController = WebViewSearchController(webView, scope)
 
     init {
-        webView.setFindListener { activeIndex, count, done ->
-            if (done && !destroyed) {
-                val request = inFlightSearch
-                inFlightSearch = null
-                if (request != null && request.first == searchGeneration) {
-                    searchMatchCount = count.coerceAtLeast(0)
-                    searchResult(request.second, searchMatchCount,
-                        if (count == 0) 0 else activeIndex.coerceIn(0, count - 1))
-                }
-                if (request != null && searchQuery.isEmpty()) webView.clearMatches()
-                else if (request != null && request.first != searchGeneration) startSearchIfReady()
-                else if (pendingSearchNavigation.isNotEmpty()) findNext(pendingSearchNavigation.removeFirst())
-            }
-        }
         webView.loadUrl(PAGE_URL)
 
         // Watch for a renderer that never starts.
@@ -207,7 +222,7 @@ class WebViewDocumentHost(
         rootPath: String? = null,
         preserveScroll: Boolean = false,
     ) {
-        invalidateSearchDocument()
+        searchController.invalidateDocument()
         scope.launch(Dispatchers.Main) {
             val read = withContext(Dispatchers.IO) {
                 runCatching { space.readText(virtualPath) }
@@ -248,7 +263,7 @@ class WebViewDocumentHost(
         rootPath: String? = null,
         preserveScroll: Boolean = false,
     ) {
-        invalidateSearchDocument()
+        searchController.invalidateDocument()
         scope.launch(Dispatchers.Main) {
             pageReady.await()
             call(
@@ -287,65 +302,15 @@ class WebViewDocumentHost(
     }
 
     /** Debounced, latest-wins rendered-text search. All entry points run on the UI thread. */
-    fun setSearchQuery(query: String, onResult: (String, Int, Int) -> Unit) {
-        searchResult = onResult
-        if (query == searchQuery) return
-        searchQuery = query
-        scheduleSearch()
-    }
+    fun setSearchQuery(query: String, onResult: (String, Int, Int) -> Unit) =
+        searchController.setSearchQuery(query, onResult)
 
     /** Native findNext wraps and scrolls using the existing native match cache. */
-    fun findNext(forward: Boolean) {
-        if (!destroyed && searchReady && searchMatchCount > 0) {
-            if (inFlightSearch != null) {
-                pendingSearchNavigation.addLast(forward)
-                return
-            }
-            // Navigation callbacks have no ID either, so give them the same generation fence.
-            inFlightSearch = searchGeneration to searchQuery
-            webView.findNext(forward)
-        }
-    }
-
-    private fun invalidateSearchDocument() {
-        searchDocumentReady = false
-        scheduleSearch()
-    }
-
-    private fun scheduleSearch() {
-        ++searchGeneration
-        pendingSearchNavigation.clear()
-        searchDebounce?.cancel()
-        searchReady = false
-        searchMatchCount = 0
-        searchResult(searchQuery, 0, 0)
-        if (searchQuery.isEmpty()) {
-            // Do not cancel an in-flight scan: its final callback is our serialization fence.
-            if (inFlightSearch == null) webView.clearMatches()
-            return
-        }
-        searchDebounce = scope.launch(Dispatchers.Main) {
-            delay(SEARCH_DEBOUNCE_MS)
-            if (!destroyed) {
-                searchReady = true
-                startSearchIfReady()
-            }
-        }
-    }
-
-    private fun startSearchIfReady() {
-        if (destroyed || !searchDocumentReady || !searchReady ||
-            inFlightSearch != null || searchQuery.isEmpty()) return
-        inFlightSearch = searchGeneration to searchQuery
-        webView.findAllAsync(searchQuery)
-    }
+    fun findNext(forward: Boolean) = searchController.findNext(forward)
 
     fun destroy() {
         destroyed = true
-        searchDebounce?.cancel()
-        ++searchGeneration
-        webView.setFindListener(null)
-        webView.clearMatches()
+        searchController.destroy()
         webView.removeJavascriptInterface(BRIDGE_NAME)
         webView.destroy()
     }
@@ -368,49 +333,6 @@ class WebViewDocumentHost(
     }
 
     // -------------------------------------------------------------------- the WebView
-
-    @SuppressLint("SetJavaScriptEnabled") // The point of option 3; see the class comment.
-    private fun createWebView(): WebView {
-        if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
-            // What the three device checks owed before the first option-3 release are run with.
-            WebView.setWebContentsDebuggingEnabled(true)
-        }
-
-        return WebView(context).apply {
-            // On, and only here. ExportManager keeps it false for PDF export, over HTML it built
-            // itself from commonmark; these two WebViews want opposite settings.
-            settings.javaScriptEnabled = true
-
-            // Everything local is reachable through the asset loader or not at all. The two
-            // file-URL settings are no-ops from API 30 but minSdk is 24.
-            settings.allowFileAccess = false
-            settings.allowContentAccess = false
-            @Suppress("DEPRECATION")
-            settings.allowFileAccessFromFileURLs = false
-            @Suppress("DEPRECATION")
-            settings.allowUniversalAccessFromFileURLs = false
-
-            // The page stores nothing. Reading state is the app's, in DataStore.
-            settings.domStorageEnabled = false
-            settings.setGeolocationEnabled(false)
-            settings.mediaPlaybackRequiresUserGesture = true
-
-            // Pinch zoom was removed from the reader deliberately; the WebView follows.
-            settings.setSupportZoom(false)
-            settings.builtInZoomControls = false
-
-            // `textZoom` is deliberately left alone: it is where the platform's font-size
-            // accessibility setting lands, and pinning it to 100 would discard that.
-
-            // `blockNetworkLoads` is deliberately not set. It would be belt over the braces of
-            // having no INTERNET permission at all, and it is one more thing that could turn the
-            // asset-loader origin into a blank page on some WebView build.
-
-            webViewClient = HostPageClient()
-            webChromeClient = HostPageChromeClient()
-            addJavascriptInterface(Bridge(), BRIDGE_NAME)
-        }
-    }
 
     private inner class HostPageClient : WebViewClient() {
 
@@ -499,10 +421,7 @@ class WebViewDocumentHost(
 
         /** Called after every renderer layout, including same-document settings re-renders. */
         @JavascriptInterface
-        fun searchRendered() = fromHostPage {
-            searchDocumentReady = true
-            scheduleSearch()
-        }
+        fun searchRendered() = fromHostPage { searchController.rendered() }
 
         @JavascriptInterface
         fun openPath(virtualPath: String) = fromHostPage { openDocument(virtualPath) }
@@ -547,6 +466,5 @@ class WebViewDocumentHost(
          * working reader into raw text, which is far worse than waiting.
          */
         const val READY_TIMEOUT_MS = 10_000L
-        const val SEARCH_DEBOUNCE_MS = 200L
     }
 }
