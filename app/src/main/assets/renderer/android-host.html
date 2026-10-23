@@ -32,8 +32,8 @@
 		  permission and keeps it that way, so a remote image could not load regardless — but
 		  the omission is deliberate rather than incidental: a document that can fetch a remote
 		  URL can exfiltrate through it. Remote images therefore render broken on Android and
-		  load on desktop, an accepted cross-host difference. Revisit alongside the device
-		  checks in docs/plan/TESTING.md, not before.
+		  load on desktop, an accepted cross-host difference. Revisit alongside the on-device
+		  checks, not before.
 		- **No `mdr:` or `ipc:` origins.** This page is served by `WebViewAssetLoader` from its
 		  own origin, so document resources are same-origin (`/__mdr/…`) and `'self'` already
 		  covers them. That is also what lets `readFile` be a plain `fetch`.
@@ -82,6 +82,22 @@
 		/* Links are handled in JS, so the grey tap flash is feedback for nothing. */
 		body {
 			-webkit-tap-highlight-color: transparent;
+		}
+
+		/*
+		 * Room for the Compose chrome drawn over this page, set by `setContentInset`.
+		 *
+		 * It is *padding on the document*, not an offset applied to the WebView from outside,
+		 * and that distinction is the whole point: the chrome collapses as the reader scrolls,
+		 * so an inset applied outside would leave a dead band behind when it goes. Padding is
+		 * part of the scrollable page, so the content simply scrolls up under the bar — which
+		 * is what the native reader does by putting the same inset inside its ScrollView.
+		 *
+		 * Desktop is unaffected. Its own toolbar offset lives in `app.css`, which is desktop
+		 * chrome and is not vendored: how much room a host's chrome needs is the host's business.
+		 */
+		body {
+			padding-top: calc(1em + var(--mr-content-inset-top, 0px));
 		}
 
 		/*

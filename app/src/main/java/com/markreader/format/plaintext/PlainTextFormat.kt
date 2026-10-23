@@ -1,6 +1,5 @@
 package com.markreader.format.plaintext
 
-import android.text.SpannableString
 import com.markreader.R
 import com.markreader.format.DocumentFormat
 import com.markreader.format.FormatCapabilities
@@ -14,7 +13,8 @@ import com.markreader.format.RenderTheme
  * formats are measured against: a `.txt` gets no table of contents, no view-mode toggle, no
  * preview pane and no formatting toolbar, because none of those mean anything without markup.
  *
- * It also stands in for CSV until P5. A `.csv` read as plain text is at least honest about what
+ * It also stands in for CSV until that gets a format. A `.csv` read as plain text is at least
+ * honest about what
  * it is showing, which is more than Markdown prose was.
  */
 object PlainTextFormat : DocumentFormat {
@@ -30,6 +30,8 @@ object PlainTextFormat : DocumentFormat {
     /** Nothing to fall back to: this format's rendering is its source. */
     override val renderFailureWarningRes: Int? = null
 
+    // Handed over as-is. [ReaderContent.Spans] takes a CharSequence precisely so that a format
+    // with no styling to add does not copy the whole document into a Spannable to say so.
     override suspend fun load(text: String, theme: RenderTheme): ReaderContent =
-        ReaderContent.Spans(SpannableString(text))
+        ReaderContent.Spans(text)
 }

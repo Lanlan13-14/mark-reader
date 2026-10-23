@@ -3,28 +3,16 @@
 All notable changes to MarkReader are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [1.0.8] - 2026-10-23
+
+### Changed
+- Restore the upstream reader architecture, renderer settings, view modes and original features, replacing the fork's windowed native Markdown reader.
+- Retain automatic signing-certificate generation when no configured keystore is available. Temporary certificates do not support updates over differently signed installations.
 
 ### Fixed
-- Jumps to late chapters and late search matches land accurately in long documents, and no longer degrade toward the end: chunk heights are one shared table — measured where a chunk has laid out, estimated from the document's own pixels-per-character and code-fence line counts elsewhere — used by both the layout and every position computation.
-- Long jumps stop animating toward a guess: the first move is instant so the target chunk mounts and lays out, and the correction to its exact line animates over a short distance.
-- Stepping through search matches no longer rescans the whole document per step, and match lookup per visible chunk is now a binary search over the sorted match list instead of a full scan.
-- The per-frame work while scrolling drops: chunk heights and their prefix sums are cached until a real measurement changes, instead of being rebuilt every scroll frame.
-
-### Fixed
-- Search no longer destroys the document's formatting. Highlighting a match replaced the styled segment with plain text, so one search wiped out headings, emphasis and code colours until the chunk was rebuilt.
-- Search works again in short documents (under the windowing threshold) and in raw text. The matches are found and counted, but none was ever painted.
-- Jumping to a heading or a search match lands on it. The position was estimated as if every chunk had the same height, so a heading near the end opened the middle of the document. The estimate now uses the document's measured pixels-per-character and is corrected to the exact line once the target chunk is on screen.
-- Matches inside or right after a table are highlighted at the right offsets.
-
-### Fixed
-- Searching a large document no longer copies the whole document to mark each match, which stalled a search in a file of a few hundred kilobytes. Matches are recorded as positions and only the part on screen is highlighted.
-- Jumping to a heading in a large document no longer rebuilds the whole page, which could hang the reader.
-
-## [1.0.7] - 2026-10-18
-
-### Improved
-- Large Markdown documents now stay responsive while scrolling. A document of more than a few dozen kilobytes used to be laid out and drawn in full by one text view, so opening or scrolling a file of a few hundred kilobytes stalled the reader. It is now split into chunks and only the chunks near the viewport are laid out; the rest of the document keeps its place in the scroll range without being drawn.
+- Keep full-document search work off the main thread and reuse matches when navigating results.
+- Connect asynchronous rendered-Markdown search without rebuilding the document for each query.
+- Render mathematical notation offline, including explicit TeX delimiters and recognized bare TeX expressions in prose; preserve code and ordinary text.
 
 ## [1.0.6] - 2026-10-12
 

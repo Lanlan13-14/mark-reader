@@ -13,7 +13,8 @@ import com.markreader.format.plaintext.PlainTextFormat
  * for *recognition* — walk the list, first format that claims the file wins — and formats no
  * longer recognise anything, so a list would carry an ordering that means nothing. What protects
  * us instead is exhaustiveness: [formatFor] is a `when` over a sealed interface, so adding a
- * document type fails to compile until someone decides which format reads it. P5 is still one
+ * document type fails to compile until someone decides which format reads it. A CSV format is
+ * still one
  * field and one branch.
  *
  * Not a singleton, and not injected. One instance per view model, holding the renderers for as
@@ -38,7 +39,7 @@ class FormatRegistry(private val markdown: DocumentFormat) {
         is DocumentType.SourceCode -> sourceCode.getOrPut(type.language) {
             SourceCodeFormat(type.language)
         }
-        // Csv reads as what it also is until P5 brings a format of its own.
+        // Csv reads as what it also is, until it gets a format of its own.
         DocumentType.Csv, DocumentType.PlainText -> PlainTextFormat
         DocumentType.Binary -> null
     }

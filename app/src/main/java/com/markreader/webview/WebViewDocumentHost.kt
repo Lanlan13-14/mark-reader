@@ -17,11 +17,13 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.annotation.RequiresApi
 import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewCompat
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
 /**
@@ -76,7 +78,7 @@ import org.json.JSONObject
  * The page starts loading on construction, so it is warming while the document is still being
  * read. [destroy] must be called when the owner goes away; the WebView outlives its Activity
  * otherwise. Placing it in Compose chrome, and the scroll behaviour that goes with it, is
- * deliberately not here — see P6 in `docs/plan/README.md`.
+ * deliberately not here.
  */
 class WebViewDocumentHost(
     private val context: Context,
@@ -85,6 +87,11 @@ class WebViewDocumentHost(
     private val onDocumentRendered: (virtualPath: String) -> Unit = {},
     /** A document could not be read. [cause] is null when the path resolved to nothing. */
     private val onDocumentFailed: (virtualPath: String, cause: Throwable?) -> Unit = { _, _ -> },
+    /**
+     * The page never reported ready, so this WebView cannot run the renderer at all. Carries the
+     * WebView's version name when it is known, for a message worth reading.
+     */
+    private val onRendererUnavailable: (webViewVersion: String?) -> Unit = {},
 ) {
 
     private val space = SafPathSpace(context.contentResolver)
@@ -108,10 +115,75 @@ class WebViewDocumentHost(
 
     private var destroyed = false
 
-    val webView: WebView = createWebView()
+    @SuppressLint("SetJavaScriptEnabled") // The point of option 3; see the class comment.
+    val webView: WebView = run {
+        if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            // What the three device checks owed before the first option-3 release are run with.
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
+
+        WebView(context).apply {
+            // On, and only here. ExportManager keeps it false for PDF export, over HTML it built
+            // itself from commonmark; these two WebViews want opposite settings.
+            settings.javaScriptEnabled = true
+
+            // Everything local is reachable through the asset loader or not at all. The two
+            // file-URL settings are no-ops from API 30 but minSdk is 24.
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            @Suppress("DEPRECATION")
+            settings.allowFileAccessFromFileURLs = false
+            @Suppress("DEPRECATION")
+            settings.allowUniversalAccessFromFileURLs = false
+
+            // The page stores nothing. Reading state is the app's, in DataStore.
+            settings.domStorageEnabled = false
+            settings.setGeolocationEnabled(false)
+            settings.mediaPlaybackRequiresUserGesture = true
+
+            // Pinch zoom was removed from the reader deliberately; the WebView follows.
+            settings.setSupportZoom(false)
+            settings.builtInZoomControls = false
+
+            // `textZoom` is deliberately left alone: it is where the platform's font-size
+            // accessibility setting lands, and pinning it to 100 would discard that.
+
+            // `blockNetworkLoads` is deliberately not set. It would be belt over the braces of
+            // having no INTERNET permission at all, and it is one more thing that could turn the
+            // asset-loader origin into a blank page on some WebView build.
+
+            webViewClient = HostPageClient()
+            webChromeClient = HostPageChromeClient()
+            addJavascriptInterface(Bridge(), BRIDGE_NAME)
+        }
+    }
+
+    private val searchController = WebViewSearchController(webView, scope)
 
     init {
         webView.loadUrl(PAGE_URL)
+
+        // Watch for a renderer that never starts.
+        //
+        // Behavioural, deliberately, rather than a version comparison. `ready()` fires only after
+        // the whole vendored module graph has resolved and executed, so its absence is the one
+        // signal covering every cause at once — a WebView too old for the syntax the renderer is
+        // written in, an asset that failed to load, a CSP that refused a module. A hardcoded
+        // minimum Chromium version would be a guess about *why*, and it would go stale the moment
+        // the shared renderer adopts newer syntax. It will: the floor moved to optional chaining
+        // without anyone noticing.
+        //
+        // The version is read only to make the message specific, never to decide anything.
+        scope.launch(Dispatchers.Main) {
+            val ready = withTimeoutOrNull(READY_TIMEOUT_MS) { pageReady.await() }
+            if (ready == null && !destroyed) {
+                val version = runCatching {
+                    WebViewCompat.getCurrentWebViewPackage(context)?.versionName
+                }.getOrNull()
+                Log.e(TAG, "the renderer never reported ready; WebView is $version")
+                onRendererUnavailable(version)
+            }
+        }
     }
 
     // ------------------------------------------------------------------ the path space
@@ -150,6 +222,7 @@ class WebViewDocumentHost(
         rootPath: String? = null,
         preserveScroll: Boolean = false,
     ) {
+        searchController.invalidateDocument()
         scope.launch(Dispatchers.Main) {
             val read = withContext(Dispatchers.IO) {
                 runCatching { space.readText(virtualPath) }
@@ -172,6 +245,54 @@ class WebViewDocumentHost(
         }
     }
 
+    /**
+     * Renders [text] as the document at [virtualPath], without reading anything.
+     *
+     * The counterpart to [openDocument], for the caller that already has the text — which the
+     * reader does: it read and decoded the bytes itself, because the encoding, the recents entry
+     * and the resume position all hang off that read. Going through [openDocument] would decode
+     * the same file a second time, up to `MAX_FILE_BYTES` of it, and leave two copies of the
+     * document that could disagree.
+     *
+     * [virtualPath] still has to name something adopted, because that is what the document's own
+     * relative images resolve against.
+     */
+    fun showDocument(
+        virtualPath: String,
+        text: String,
+        rootPath: String? = null,
+        preserveScroll: Boolean = false,
+    ) {
+        searchController.invalidateDocument()
+        scope.launch(Dispatchers.Main) {
+            pageReady.await()
+            call(
+                "showDocument",
+                JSONObject()
+                    .put("path", virtualPath)
+                    .put("text", text)
+                    .put("rootPath", rootPath ?: JSONObject.NULL)
+                    .put("preserveScroll", preserveScroll),
+            )
+        }
+    }
+
+    /**
+     * Room to leave at the top of the document for chrome drawn over the WebView, in CSS pixels
+     * (which are dp here, since the host disables zoom).
+     *
+     * Deliberately *not* an inset applied to the WebView from outside. The chrome collapses as
+     * the reader scrolls, and an outer inset would leave a dead band where it used to be; page
+     * padding scrolls away with the content, which is what the native reader gets by putting the
+     * same inset inside its `ScrollView`.
+     */
+    fun applyContentInset(topDp: Float) {
+        scope.launch(Dispatchers.Main) {
+            pageReady.await()
+            call("setContentInset", JSONObject().put("top", topDp))
+        }
+    }
+
     /** Applies reader settings. Safe before the first document; the page re-renders if it needs to. */
     fun applySettings(settings: RendererSettings) {
         scope.launch(Dispatchers.Main) {
@@ -180,8 +301,16 @@ class WebViewDocumentHost(
         }
     }
 
+    /** Debounced, latest-wins rendered-text search. All entry points run on the UI thread. */
+    fun setSearchQuery(query: String, onResult: (String, Int, Int) -> Unit) =
+        searchController.setSearchQuery(query, onResult)
+
+    /** Native findNext wraps and scrolls using the existing native match cache. */
+    val findNext: (Boolean) -> Unit = searchController::findNext
+
     fun destroy() {
         destroyed = true
+        searchController.destroy()
         webView.removeJavascriptInterface(BRIDGE_NAME)
         webView.destroy()
     }
@@ -204,49 +333,6 @@ class WebViewDocumentHost(
     }
 
     // -------------------------------------------------------------------- the WebView
-
-    @SuppressLint("SetJavaScriptEnabled") // The point of option 3; see the class comment.
-    private fun createWebView(): WebView {
-        if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
-            // What the three device checks owed before the first option-3 release are run with.
-            WebView.setWebContentsDebuggingEnabled(true)
-        }
-
-        return WebView(context).apply {
-            // On, and only here. ExportManager keeps it false for PDF export, over HTML it built
-            // itself from commonmark; these two WebViews want opposite settings.
-            settings.javaScriptEnabled = true
-
-            // Everything local is reachable through the asset loader or not at all. The two
-            // file-URL settings are no-ops from API 30 but minSdk is 24.
-            settings.allowFileAccess = false
-            settings.allowContentAccess = false
-            @Suppress("DEPRECATION")
-            settings.allowFileAccessFromFileURLs = false
-            @Suppress("DEPRECATION")
-            settings.allowUniversalAccessFromFileURLs = false
-
-            // The page stores nothing. Reading state is the app's, in DataStore.
-            settings.domStorageEnabled = false
-            settings.setGeolocationEnabled(false)
-            settings.mediaPlaybackRequiresUserGesture = true
-
-            // Pinch zoom was removed from the reader deliberately; the WebView follows.
-            settings.setSupportZoom(false)
-            settings.builtInZoomControls = false
-
-            // `textZoom` is deliberately left alone: it is where the platform's font-size
-            // accessibility setting lands, and pinning it to 100 would discard that.
-
-            // `blockNetworkLoads` is deliberately not set. It would be belt over the braces of
-            // having no INTERNET permission at all, and it is one more thing that could turn the
-            // asset-loader origin into a blank page on some WebView build.
-
-            webViewClient = HostPageClient()
-            webChromeClient = HostPageChromeClient()
-            addJavascriptInterface(Bridge(), BRIDGE_NAME)
-        }
-    }
 
     private inner class HostPageClient : WebViewClient() {
 
@@ -333,6 +419,10 @@ class WebViewDocumentHost(
         @JavascriptInterface
         fun rendered(virtualPath: String) = fromHostPage { onDocumentRendered(virtualPath) }
 
+        /** Called after every renderer layout, including same-document settings re-renders. */
+        @JavascriptInterface
+        fun searchRendered() = fromHostPage { searchController.rendered() }
+
         @JavascriptInterface
         fun openPath(virtualPath: String) = fromHostPage { openDocument(virtualPath) }
 
@@ -351,7 +441,7 @@ class WebViewDocumentHost(
          */
         private inline fun fromHostPage(crossinline action: () -> Unit) {
             scope.launch(Dispatchers.Main) {
-                if (webView.url?.startsWith(PAGE_URL) == true) {
+                if (!destroyed && webView.url?.startsWith(PAGE_URL) == true) {
                     action()
                 }
             }
@@ -367,5 +457,14 @@ class WebViewDocumentHost(
         const val PAGE_URL = "$ORIGIN${ASSETS_PREFIX}renderer/android-host.html"
 
         const val BRIDGE_NAME = "__mdrHost"
+
+        /**
+         * How long the page gets to report ready before the renderer is called unusable.
+         *
+         * Generous on purpose. The spike measured ~1.15 s of fixed cost on a cold process start,
+         * and that was not the slowest device anyone owns — a false positive here would drop a
+         * working reader into raw text, which is far worse than waiting.
+         */
+        const val READY_TIMEOUT_MS = 10_000L
     }
 }

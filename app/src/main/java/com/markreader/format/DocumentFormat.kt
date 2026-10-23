@@ -9,10 +9,9 @@ import com.markreader.file.DocumentType
  *
  * **Formats do not recognise files.** [com.markreader.file.DocumentTypeResolver] is the single
  * detection authority and [FormatRegistry] is a [DocumentType] to [DocumentFormat] lookup over
- * it. The reasoning is written up in `docs/plan/architecture.md` seam 2 and is not re-litigated
- * here; the short version is that `DocumentResourceHandler` in the WebView host has to ask "is
- * this file text", and moving detection into formats would drag Markwon and Prism4j into that
- * layer to answer it.
+ * it. The reason is that `DocumentResourceHandler` in the WebView host has to ask "is this file
+ * text", and moving detection into formats would drag Markwon and Prism4j into that layer to
+ * answer it.
  *
  * There is also no `type` property. Nothing asks a format what it reads — the registry's `when`
  * is that mapping, and having the answer in two places is how the two drift apart.
@@ -49,6 +48,19 @@ interface DocumentFormat {
      * which case the caller shows the source and says so with [renderFailureWarningRes].
      */
     suspend fun load(text: String, theme: RenderTheme): ReaderContent?
+
+    /**
+     * As [load], for the editor's preview pane.
+     *
+     * **A temporary second door, and closing it is planned.** The viewer's rendered path is a WebView
+     * now, but the editor preview is still a Markwon `TextView` — so a format whose [load]
+     * answers [ReaderContent.Markdown] has to answer something drawable here instead. Formats
+     * that render the same way on both surfaces inherit this default and say nothing.
+     *
+     * Only called where [FormatCapabilities.hasEditorPreview] is true.
+     */
+    suspend fun loadEditorPreview(text: String, theme: RenderTheme): ReaderContent? =
+        load(text, theme)
 
     /**
      * The document's table of contents. Empty unless [FormatCapabilities.hasHeadings].

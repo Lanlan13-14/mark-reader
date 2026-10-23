@@ -69,7 +69,7 @@ class FormatRegistryTest {
         assertNull(format.renderFailureWarningRes)
     }
 
-    /** Until P5. A `.csv` read as text is at least honest, which Markdown prose was not. */
+    /** Until CSV gets a format. A `.csv` read as text is at least honest, which prose was not. */
     @Test
     fun `csv reads as plain text for now`() {
         assertSame(PlainTextFormat, registry.formatFor(DocumentType.Csv))

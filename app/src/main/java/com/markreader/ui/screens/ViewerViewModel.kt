@@ -3,8 +3,6 @@ package com.markreader.ui.screens
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
-import android.text.Spanned
-import com.markreader.ui.reader.SearchMatches
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -22,8 +20,9 @@ import com.markreader.format.FormatRegistry
 import com.markreader.format.HeadingItem
 import com.markreader.format.ReaderContent
 import com.markreader.format.RenderTheme
+import com.markreader.ui.reader.NativeSearchMatches
+import com.markreader.ui.reader.NativeSearchText
 import com.markreader.ui.UiMessage
-import com.markreader.ui.reader.SearchHighlightSpan
 import com.markreader.R
 import com.markreader.file.DocumentSource
 import com.markreader.file.FileTooLargeException
@@ -36,6 +35,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -49,8 +50,8 @@ data class ViewerUiState(
     val isLoadingVisible: Boolean = false,
     val fileName: String = "",
     val rawText: String = "",
-    val rawHighlighted: Spanned? = null,
-    val rendered: Spanned? = null,
+    val rawHighlighted: ReaderContent? = null,
+    val rendered: ReaderContent? = null,
     val errorMessage: UiMessage? = null,
     val warningMessage: UiMessage? = null,
     val isEmptyFile: Boolean = false,
@@ -62,11 +63,6 @@ data class ViewerUiState(
     val searchQuery: String = "",
     val searchMatchCount: Int = 0,
     val searchMatchIndex: Int = 0,
-    /**
-     * Match positions only. Not part of the rendered text: copying a large document to attach a
-     * span per match is what made searching one stall. Null while no query is active.
-     */
-    val searchMatches: SearchMatches? = null,
     val userPreferences: UserPreferences = UserPreferences(),
     val documentType: DocumentType = DocumentType.PlainText,
     /** What the chrome may offer, decided by the document's format rather than by its type. */
@@ -95,13 +91,12 @@ class ViewerViewModel(
     private var loadingJob: Job? = null
     private var rebuildJob: Job? = null
     private var searchJob: Job? = null
-    private var baseRendered: Spanned? = null
+    private var baseRendered: ReaderContent? = null
     private var renderDarkModeOverride: Boolean? = null
     private var preferencesLoaded = false
     private var pendingExternalRerender = initialUri != null
-    private var matches: SearchMatches = SearchMatches.find("", "")
     private var renderCacheTextHash = 0
-    private val renderCache = mutableMapOf<RenderCacheKey, Spanned>()
+    private val renderCache = mutableMapOf<RenderCacheKey, ReaderContent>()
 
     private val _uiState = MutableStateFlow(ViewerUiState())
     val uiState: StateFlow<ViewerUiState> = _uiState.asStateFlow()
@@ -135,10 +130,14 @@ class ViewerViewModel(
         // Cancel any in-flight load: a slow read for a previous URI must not
         // finish after this one and overwrite the newer content.
         loadJob?.cancel()
+        // Invalidate synchronously, before dispatching the replacement load.
+        invalidateNativeSearch()
+        rebuildJob?.cancel()
+        currentFormat = null
+        baseRendered = null
+        _scrollToOffset.value = null
         loadJob = viewModelScope.launch {
             loadingJob?.cancel()
-            searchJob?.cancel()
-            matches = SearchMatches.find("", "")
             _scrollProgress.value = null
             _uiState.value = _uiState.value.copy(
                 isLoading = true,
@@ -155,8 +154,7 @@ class ViewerViewModel(
                 isSearchActive = false,
                 searchQuery = "",
                 searchMatchCount = 0,
-                searchMatchIndex = 0,
-                searchMatches = null
+                searchMatchIndex = 0
             )
 
             loadingJob = viewModelScope.launch {
@@ -203,8 +201,7 @@ class ViewerViewModel(
                     rawHighlighted = null,
                     searchQuery = "",
                     searchMatchCount = 0,
-                    searchMatchIndex = 0,
-                searchMatches = null
+                    searchMatchIndex = 0
                 )
                 return@launch
             }
@@ -228,8 +225,7 @@ class ViewerViewModel(
                     isEmptyFile = true,
                     searchQuery = "",
                     searchMatchCount = 0,
-                    searchMatchIndex = 0,
-                searchMatches = null
+                    searchMatchIndex = 0
                 )
                 return@launch
             }
@@ -240,7 +236,7 @@ class ViewerViewModel(
             val theme = RenderTheme(
                 renderDarkModeOverride ?: isDarkTheme(_uiState.value.userPreferences, systemDarkTheme)
             )
-            val loaded = format?.load(markdown, theme).asSpans()
+            val loaded = format?.load(markdown, theme)
 
             if (format == null || loaded == null) {
                 loadingJob?.cancel()
@@ -254,7 +250,6 @@ class ViewerViewModel(
                     searchQuery = "",
                     searchMatchCount = 0,
                     searchMatchIndex = 0,
-                searchMatches = null,
                     documentType = documentType,
                     // A null format is DocumentType.Binary: bytes that are not text, so there
                     // is no format to ask and nothing but the raw view to offer.
@@ -270,15 +265,15 @@ class ViewerViewModel(
 
             val headings = format.headings(markdown, loaded)
             loadingJob?.cancel()
-            baseRendered = loaded.spanned
-            renderCache[RenderCacheKey(documentType, theme)] = loaded.spanned
+            baseRendered = loaded
+            renderCache[RenderCacheKey(documentType, theme)] = loaded
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
                 isLoadingVisible = false,
                 fileName = fileName,
                 rawText = markdown,
                 rawHighlighted = null,
-                rendered = loaded.spanned,
+                rendered = loaded,
                 errorMessage = null,
                 warningMessage = null,
                 headings = headings,
@@ -312,8 +307,7 @@ class ViewerViewModel(
             isSearchActive = active,
             searchQuery = if (active) _uiState.value.searchQuery else "",
             searchMatchCount = 0,
-            searchMatchIndex = 0,
-                searchMatches = null
+            searchMatchIndex = 0
         )
         if (!active) {
             searchJob?.cancel()
@@ -324,39 +318,23 @@ class ViewerViewModel(
     fun onSearchQueryChanged(query: String) {
         _uiState.value = _uiState.value.copy(
             searchQuery = query,
-            searchMatchIndex = 0,
-                searchMatches = null
+            searchMatchIndex = 0
         )
-        searchJob?.cancel()
-        if (query.isBlank()) {
-            applySearchQuery(query)
-            return
-        }
-        // Debounced: the highlight pass rebuilds a span per match over the whole
-        // document, which is too heavy to run per keystroke on large files.
-        searchJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(200)
-            applySearchQuery(query)
-            // Bring the first match into view; without this, a query whose
-            // matches are all off-screen gives no visible feedback.
-            if (matches.count > 0) _scrollToOffset.value = matches.startAt(0)
-        }
+        applySearchQuery(query, debounce = true, scrollToFirst = true)
     }
 
-    fun onNextMatch() {
-        val count = _uiState.value.searchMatchCount
-        if (count == 0) return
-        val next = (_uiState.value.searchMatchIndex + 1) % count
-        _uiState.value = _uiState.value.copy(searchMatchIndex = next)
-        _scrollToOffset.value = matches.startAt(next)
-    }
+    fun onNextMatch() = navigateNativeMatch(1)
 
-    fun onPreviousMatch() {
-        val count = _uiState.value.searchMatchCount
+    fun onPreviousMatch() = navigateNativeMatch(-1)
+
+    private fun navigateNativeMatch(delta: Int) {
+        val count = nativeMatches.size
         if (count == 0) return
-        val prev = if (_uiState.value.searchMatchIndex - 1 < 0) count - 1 else _uiState.value.searchMatchIndex - 1
-        _uiState.value = _uiState.value.copy(searchMatchIndex = prev)
-        _scrollToOffset.value = matches.startAt(prev)
+        val index = (_uiState.value.searchMatchIndex + delta + count) % count
+        val decoration = nativeDecoration?.withActiveIndex(index) ?: return
+        nativeDecoration = decoration
+        publishNativeDecoration(decoration, index)
+        _scrollToOffset.value = nativeMatches.start(index)
     }
 
     fun onHeadingSelected(offset: Int) {
@@ -452,14 +430,17 @@ class ViewerViewModel(
         val format = currentFormat ?: return
         val theme = currentTheme()
         val documentType = _uiState.value.documentType
-        viewModelScope.launch {
+        rebuildJob = viewModelScope.launch {
             if (tryApplyCachedRender(documentType, theme)) {
                 return@launch
             }
-            val loaded = format.load(markdown, theme).asSpans() ?: return@launch
-            baseRendered = loaded.spanned
-            renderCache[RenderCacheKey(documentType, theme)] = loaded.spanned
-            _uiState.value = _uiState.value.copy(rendered = loaded.spanned)
+            val loaded = format.load(markdown, theme) ?: return@launch
+            if (_uiState.value.rawText !== markdown || currentFormat !== format || currentTheme() != theme) {
+                return@launch
+            }
+            baseRendered = loaded
+            renderCache[RenderCacheKey(documentType, theme)] = loaded
+            _uiState.value = _uiState.value.copy(rendered = loaded)
             applySearchQuery(_uiState.value.searchQuery)
         }
     }
@@ -546,57 +527,114 @@ class ViewerViewModel(
         )
     }
 
-    private fun applySearchQuery(query: String) {
-        val currentState = _uiState.value
-        val activeViewMode = currentState.viewMode
-        val baseText = when (activeViewMode) {
-            ViewMode.Raw -> currentState.rawText
-            ViewMode.Rendered -> baseRendered?.toString().orEmpty()
-        }
+    private var searchGeneration = 0L
+    private var nativeMatches = NativeSearchMatches.Empty
+    private var nativeDecoration: NativeSearchText? = null
 
-        if (activeViewMode == ViewMode.Rendered && baseRendered == null) {
-            matches = SearchMatches.find("", "")
-            _uiState.value = currentState.copy(
-                rawHighlighted = null,
-                searchMatchCount = 0,
-                searchMatchIndex = 0,
-                searchMatches = null
-            )
-            return
-        }
+    /** Exposed for the screen's WebView find-in-page routing; raw mode stays native. */
+    val isWebViewSearch: Boolean
+        get() = _uiState.value.viewMode == ViewMode.Rendered && baseRendered is ReaderContent.Markdown
 
-        if (query.isBlank()) {
-            matches = SearchMatches.find("", "")
-            _uiState.value = _uiState.value.copy(
-                rendered = baseRendered,
-                rawHighlighted = null,
-                searchMatchCount = 0,
-                searchMatchIndex = 0,
-                searchMatches = null
-            )
-            return
-        }
+    /** Ignore callbacks from a closed search, old query, or another reading surface. */
+    fun onWebViewSearchResult(query: String, count: Int, index: Int) {
+        val state = _uiState.value
+        if (!isWebViewSearch || state.rendered !is ReaderContent.Markdown) return
+        if (!state.isSearchActive || state.searchQuery != query) return
+        val safeCount = count.coerceAtLeast(0)
+        _uiState.value = state.copy(
+            searchMatchCount = safeCount,
+            searchMatchIndex = if (safeCount == 0) 0 else index.coerceIn(0, safeCount - 1)
+        )
+    }
 
-        matches = SearchMatches.find(baseText, query)
-        val count = matches.count
-        val activeIndex = _uiState.value.searchMatchIndex.coerceIn(0, (count - 1).coerceAtLeast(0))
+    private fun invalidateNativeSearch() {
+        searchJob?.cancel()
+        searchGeneration++
+        nativeMatches = NativeSearchMatches.Empty
+        nativeDecoration = null
+    }
 
-                _uiState.value = when (activeViewMode) {
-            ViewMode.Rendered -> _uiState.value.copy(
-                rendered = baseRendered,
-                rawHighlighted = null,
-                searchMatches = matches,
-                searchMatchCount = count,
-                searchMatchIndex = if (count == 0) 0 else activeIndex
-            )
-            ViewMode.Raw -> _uiState.value.copy(
-                rendered = baseRendered,
-                rawHighlighted = null,
-                searchMatches = matches,
-                searchMatchCount = count,
-                searchMatchIndex = if (count == 0) 0 else activeIndex
-            )
+    private fun applySearchQuery(
+        query: String,
+        debounce: Boolean = false,
+        scrollToFirst: Boolean = false
+    ) {
+        invalidateNativeSearch()
+        val generation = searchGeneration
+        val state = _uiState.value
+        val mode = state.viewMode
+        val rendered = baseRendered
+        val raw = state.rawText
+        // Capture only the original text, never a previous search decoration.
+        val source = when (mode) {
+            ViewMode.Raw -> raw
+            ViewMode.Rendered -> (rendered as? ReaderContent.Spans)?.text
         }
+        _uiState.value = state.copy(
+            rendered = rendered,
+            rawHighlighted = null,
+            searchMatchCount = 0,
+            searchMatchIndex = 0
+        )
+        if (query.isBlank() || source == null) return
+        searchJob = viewModelScope.launch {
+            if (debounce) kotlinx.coroutines.delay(200)
+            val matches = withContext(Dispatchers.Default) {
+                val context = currentCoroutineContext()
+                NativeSearchMatches.find(source, query) { context.ensureActive() }
+            }
+            val latest = _uiState.value
+            // Cancellation plus explicit identity guards: a completed worker must not
+            // publish offsets into a replacement document, view mode or theme render.
+            if (generation != searchGeneration || latest.searchQuery != query) return@launch
+            if (latest.viewMode != mode || latest.rawText !== raw || baseRendered !== rendered) return@launch
+            publishNativeMatches(source, matches, latest, scrollToFirst)
+        }
+    }
+
+    private fun publishNativeMatches(
+        source: CharSequence,
+        matches: NativeSearchMatches,
+        state: ViewerUiState,
+        scrollToFirst: Boolean
+    ) {
+        nativeMatches = matches
+        if (matches.size == 0) return
+        val decoration = createNativeDecoration(source, matches, state.userPreferences)
+        nativeDecoration = decoration
+        publishNativeDecoration(decoration, 0)
+        if (scrollToFirst) _scrollToOffset.value = matches.start(0)
+    }
+
+    private fun createNativeDecoration(
+        source: CharSequence,
+        matches: NativeSearchMatches,
+        prefs: UserPreferences
+    ): NativeSearchText {
+        val isDark = renderDarkModeOverride ?: isDarkTheme(prefs, systemDarkTheme)
+        val activeTheme = if (isDark) prefs.readerDarkTheme else prefs.readerLightTheme
+        val isSepia = activeTheme == com.markreader.data.ReaderThemePreference.Sepia
+        val passiveColor = when {
+            isDark -> 0x66FFD54F.toInt()
+            isSepia -> 0x55A85A00.toInt()
+            else -> 0x553197F5.toInt()
+        }
+        val activeColor = when {
+            isDark -> 0xCCFFD54F.toInt()
+            isSepia -> 0xDD8B4513.toInt()
+            else -> 0xFF1565C0.toInt()
+        }
+        return NativeSearchText(source, matches, 0, passiveColor, activeColor)
+    }
+
+    private fun publishNativeDecoration(decoration: NativeSearchText, index: Int) {
+        val state = _uiState.value
+        _uiState.value = state.copy(
+            rendered = if (state.viewMode == ViewMode.Rendered) ReaderContent.Spans(decoration) else baseRendered,
+            rawHighlighted = if (state.viewMode == ViewMode.Raw) ReaderContent.Spans(decoration) else null,
+            searchMatchCount = decoration.matches.size,
+            searchMatchIndex = index
+        )
     }
 
     private fun clampActiveHeadingIndex(current: Int, headings: List<HeadingItem>): Int {
@@ -630,10 +668,3 @@ class ViewerViewModel(
         }
     }
 }
-
-/**
- * The reader surface still draws styled text and nothing else, so this is where the other two
- * [ReaderContent] shapes stop. P4 retypes the surface and this narrowing goes with it — until
- * then no format produces a [ReaderContent.Html] or [ReaderContent.Table] to lose.
- */
-private fun ReaderContent?.asSpans(): ReaderContent.Spans? = this as? ReaderContent.Spans

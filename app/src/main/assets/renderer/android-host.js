@@ -31,6 +31,7 @@
 import { getConfig, parseConfig, setConfig, setHostDefaults } from './config.js';
 import { DocumentView } from './document.js';
 import { NO_CAPABILITIES } from './host.js';
+import { createSearchRenderNotifier } from './search.js';
 import { asLocalResourceUri, setResourceOrigin } from './util.js';
 
 /**
@@ -49,6 +50,7 @@ const RESOURCE_PREFIX = '/__mdr';
 const NO_BRIDGE = {
 	ready: () => console.warn('[host] no Kotlin bridge; running detached'),
 	rendered: path => console.info('[host] rendered', path),
+	searchRendered: () => {},
 	openPath: path => console.info('[host] openPath', path),
 	openExternal: url => console.info('[host] openExternal', url),
 };
@@ -143,6 +145,11 @@ const view = new DocumentView({
  * landed. Two frames after the render, they have. That is the signal a loading state is
  * dismissed on, and the one the spike measured first paint with.
  */
+const searchRender = createSearchRenderNotifier(() => bridge.searchRendered());
+// `headings` is emitted on every render, not only when a different document opens.
+view.on('headings', () => searchRender.rendered());
+window.addEventListener('pagehide', () => searchRender.dispose(), { once: true });
+
 view.on('document', doc => {
 	if (doc) {
 		requestAnimationFrame(() => requestAnimationFrame(() => bridge.rendered(doc.path)));
@@ -186,6 +193,20 @@ const page = {
 			{ path: payload.path, text: payload.text },
 			{ preserveScroll: payload.preserveScroll === true },
 		);
+	},
+
+	/**
+	 * Room to leave at the top of the document for the chrome Compose draws over it.
+	 *
+	 * Android-only, and not part of the shared host contract: the desktop shell sizes its own
+	 * toolbar offset in `app.css`. Applied as document padding so it scrolls away with the
+	 * content when the chrome collapses.
+	 *
+	 * @param json {string} a JSON `{ top }`, in CSS pixels.
+	 */
+	setContentInset(json) {
+		const top = Number(JSON.parse(json).top) || 0;
+		document.documentElement.style.setProperty('--mr-content-inset-top', `${Math.max(0, top)}px`);
 	},
 
 	/**
