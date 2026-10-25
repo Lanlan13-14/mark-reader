@@ -3,8 +3,8 @@ package com.markreader.ui.screens
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.input.TextFieldValue
+import com.markreader.ui.editor.EditorDocumentSession
+import com.markreader.ui.editor.EditorRevisionState
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -31,6 +31,11 @@ import com.markreader.format.RenderTheme
 import com.markreader.ui.UiMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -57,7 +62,6 @@ sealed class SaveResult {
 data class EditorUiState(
     val isLoading: Boolean = true,
     val fileName: String = "",
-    val textFieldValue: TextFieldValue = TextFieldValue(""),
     /** What the editor may offer, decided by the document's format rather than by its type. */
     val capabilities: FormatCapabilities = FormatCapabilities(),
     /** What an empty document of this format invites the user to type. */
@@ -90,7 +94,21 @@ class EditorViewModel(
     private val _uiState = MutableStateFlow(EditorUiState())
     val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
 
+    // Mutable native buffer is deliberately excluded from StateFlow equality and recomposition.
+    val documentSession = EditorDocumentSession()
+    private val revisions = EditorRevisionState()
+    private var previewJob: Job? = null
+    // Markwon parsing is not cooperatively cancellable. Never overlap parsers after cancellation.
+    private val previewMutex = Mutex()
+
     init {
+        documentSession.onChanged = {
+            // Selection/composition-span changes never arrive here. No text read, copy or parse.
+            invalidatePreview()
+            if (!_uiState.value.isModified || _uiState.value.previewText != null) {
+                _uiState.value = _uiState.value.copy(isModified = true, previewText = null)
+            }
+        }
         observePreferences()
         if (initialUri != null) {
             loadContent()
@@ -110,15 +128,15 @@ class EditorViewModel(
         if (systemDarkTheme == isDark) return
         systemDarkTheme = isDark
         formats.invalidateRenderers()
-        if (isPreviewShowing()) {
-            viewModelScope.launch { renderPreview(_uiState.value.textFieldValue.text) }
-        }
+        requestPreview()
     }
 
     private fun observePreferences() {
         viewModelScope.launch {
             repository.preferences.collect { prefs ->
+                val themeChanged = _uiState.value.userPreferences.appThemeMode != prefs.appThemeMode
                 _uiState.value = _uiState.value.copy(userPreferences = prefs)
+                if (themeChanged) requestPreview()
             }
         }
     }
@@ -139,10 +157,11 @@ class EditorViewModel(
             } catch (e: Exception) {
                 null
             }
+            documentSession.replaceAll(decoded?.text ?: "")
+            revisions.reset(documentSession.revision)
             _uiState.value = _uiState.value.withFormatFor(fileName).copy(
                 isLoading = false,
                 fileName = fileName,
-                textFieldValue = TextFieldValue(decoded?.text ?: ""),
                 encoding = decoded?.encoding,
                 errorMessage = when {
                     tooLarge -> UiMessage(R.string.editor_error_file_too_large)
@@ -150,21 +169,13 @@ class EditorViewModel(
                     else -> null
                 }
             )
-        }
-    }
-
-    fun onTextChanged(value: TextFieldValue) {
-        _uiState.value = _uiState.value.copy(textFieldValue = value, isModified = true)
-        if (isPreviewShowing()) {
-            viewModelScope.launch { renderPreview(value.text) }
+            requestPreview()
         }
     }
 
     fun onTabChanged(tab: EditorTab) {
         _uiState.value = _uiState.value.copy(activeTab = tab)
-        if (tab == EditorTab.Preview && _uiState.value.capabilities.hasEditorPreview) {
-            viewModelScope.launch { renderPreview(_uiState.value.textFieldValue.text) }
-        }
+        requestPreview()
     }
 
     // Formatting helpers
@@ -181,111 +192,82 @@ class EditorViewModel(
     fun formatBlockquote() = insertLinePrefix("> ")
     fun formatLink() = wrapSelection("[", "](url)")
 
-    private fun wrapSelection(prefix: String, suffix: String) {
-        val current = _uiState.value.textFieldValue
-        val text = current.text
-        val sel = current.selection
-        val newText: String
-        val newSelection: TextRange
-        if (sel.collapsed) {
-            newText = text.substring(0, sel.start) + prefix + suffix + text.substring(sel.start)
-            newSelection = TextRange(sel.start + prefix.length)
-        } else {
-            val selected = text.substring(sel.start, sel.end)
-            newText = text.substring(0, sel.start) + prefix + selected + suffix + text.substring(sel.end)
-            newSelection = TextRange(sel.start + prefix.length, sel.end + prefix.length)
-        }
-        _uiState.value = _uiState.value.copy(
-            textFieldValue = TextFieldValue(text = newText, selection = newSelection),
-            isModified = true
-        )
-    }
+    private fun wrapSelection(prefix: String, suffix: String) =
+        documentSession.wrapSelection(prefix, suffix)
 
-    private fun insertLinePrefix(prefix: String) {
-        val current = _uiState.value.textFieldValue
-        val text = current.text
-        val sel = current.selection
-        val lineStart = text.lastIndexOf('\n', sel.start - 1) + 1
-        val newText = text.substring(0, lineStart) + prefix + text.substring(lineStart)
-        val newSelection = TextRange(sel.start + prefix.length, sel.end + prefix.length)
-        _uiState.value = _uiState.value.copy(
-            textFieldValue = TextFieldValue(text = newText, selection = newSelection),
-            isModified = true
-        )
-    }
+    private fun insertLinePrefix(prefix: String) = documentSession.insertLinePrefix(prefix)
 
-    private fun insertAtCursor(insertion: String) {
-        val current = _uiState.value.textFieldValue
-        val pos = current.selection.end
-        val newText = current.text.substring(0, pos) + insertion + current.text.substring(pos)
-        _uiState.value = _uiState.value.copy(
-            textFieldValue = TextFieldValue(text = newText, selection = TextRange(pos + insertion.length)),
-            isModified = true
-        )
-    }
+    private fun insertAtCursor(insertion: String) = documentSession.insertAtCursor(insertion)
 
     fun save() {
+        if (_uiState.value.isLoading || revisions.isSaving) return
         val uri = Uri.parse(currentUri ?: return)
-        val content = _uiState.value.textFieldValue.text
-        // Refuse rather than guess. The read was lossy, so UTF-8 here would write replacement
-        // characters over bytes we never understood.
+        // A lossy decode cannot safely overwrite the source. Save As uses known UTF-8 instead.
         val encoding = _uiState.value.encoding ?: run {
             _uiState.value = _uiState.value.copy(saveResult = SaveResult.UnknownEncoding)
             return
         }
-        _uiState.value = _uiState.value.copy(isSaving = true, saveResult = null)
-        viewModelScope.launch {
-            val written = DocumentSource.write(
-                getApplication<Application>().contentResolver,
-                uri,
-                TextCodec.encode(content, encoding)
-            )
-            _uiState.value = if (written) {
-                _uiState.value.copy(
-                    isSaving = false, isModified = false, saveResult = SaveResult.Success
-                )
-            } else {
-                _uiState.value.copy(isSaving = false, saveResult = SaveResult.NoPermission)
-            }
-        }
+        saveSnapshot(uri, encoding, saveAs = false)
     }
 
     fun onSaveAs(newUri: Uri) {
-        val content = _uiState.value.textFieldValue.text
+        if (_uiState.value.isLoading || revisions.isSaving) return
+        saveSnapshot(newUri, _uiState.value.encoding ?: TextEncoding.Utf8, saveAs = true)
+    }
+
+    private fun saveSnapshot(uri: Uri, encoding: TextEncoding, saveAs: Boolean) {
+        // Both accesses are main-thread confined: this pair describes one immutable snapshot.
+        val revision = documentSession.revision
+        val content = documentSession.snapshot()
+        if (!revisions.beginSave(revision)) return
         _uiState.value = _uiState.value.copy(isSaving = true, saveResult = null)
-        val encoding = _uiState.value.encoding ?: TextEncoding.Utf8
         viewModelScope.launch {
+            var written = false
             try {
-                val written = DocumentSource.write(
-                    getApplication<Application>().contentResolver,
-                    newUri,
-                    TextCodec.encode(content, encoding)
+                val bytes = withContext(Dispatchers.Default) { TextCodec.encode(content, encoding) }
+                // Resolve metadata before the write: once it succeeds the new URI can be adopted
+                // without another suspension (and cancellation cannot leave the old URI active).
+                val newFileName = if (saveAs) {
+                    resolveFileName(uri) ?: uri.lastPathSegment ?: _uiState.value.fileName
+                } else null
+                written = DocumentSource.write(
+                    getApplication<Application>().contentResolver, uri, bytes
                 )
                 if (!written) {
-                    _uiState.value = _uiState.value.copy(
-                        isSaving = false, saveResult = SaveResult.NoPermission
-                    )
+                    _uiState.value = _uiState.value.copy(saveResult = SaveResult.NoPermission)
                     return@launch
                 }
-                // Keep the new document reachable after this session: without a
-                // persisted grant it can't be reopened, and recordOpen would skip it.
-                getApplication<Application>().contentResolver.tryTakePersistablePermission(
-                    newUri,
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-                val newFileName = resolveFileName(newUri) ?: newUri.lastPathSegment ?: _uiState.value.fileName
-                recentFilesRepository.recordOpen(newUri.toString(), newFileName)
-                currentUri = newUri.toString()
-                _uiState.value = _uiState.value.withFormatFor(newFileName).copy(
-                    isSaving = false, isModified = false,
-                    fileName = newFileName, saveResult = SaveResult.Success,
-                    // The copy is written in a known encoding, so this one can be saved to.
-                    encoding = encoding
-                )
-            } catch (e: Exception) {
+                if (newFileName != null) {
+                    currentUri = uri.toString()
+                    _uiState.value = _uiState.value.withFormatFor(newFileName).copy(
+                        fileName = newFileName, encoding = encoding, previewText = null
+                    )
+                    requestPreview()
+                }
+                _uiState.value = _uiState.value.copy(saveResult = SaveResult.Success)
+                if (saveAs) {
+                    // Recent-files/grant bookkeeping must not turn a successful write into an error.
+                    try {
+                        getApplication<Application>().contentResolver.tryTakePersistablePermission(
+                            uri,
+                            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        )
+                        recentFilesRepository.recordOpen(uri.toString(), checkNotNull(newFileName))
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) { }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                _uiState.value = _uiState.value.copy(saveResult = SaveResult.NoPermission)
+            } finally {
+                revisions.finishSave(written)
+                // A successful write saves its snapshot, NOT whatever the user has since typed.
                 _uiState.value = _uiState.value.copy(
-                    isSaving = false, saveResult = SaveResult.NoPermission
+                    isSaving = false,
+                    isModified = revisions.isModified(documentSession.revision)
                 )
             }
         }
@@ -299,19 +281,47 @@ class EditorViewModel(
         _uiState.value.capabilities.hasEditorPreview &&
             _uiState.value.activeTab == EditorTab.Preview
 
-    private suspend fun renderPreview(text: String) {
-        val isDark = when (_uiState.value.userPreferences.appThemeMode) {
-            AppThemeModePreference.Dark -> true
-            AppThemeModePreference.Light -> false
-            AppThemeModePreference.System -> systemDarkTheme
+    private fun invalidatePreview(): Long {
+        previewJob?.cancel()
+        previewJob = null
+        return revisions.invalidatePreview()
+    }
+
+    /** Only tab/theme/format actions request work. Typing merely invalidates old work. */
+    private fun requestPreview() {
+        val generation = invalidatePreview()
+        if (!isPreviewShowing() || _uiState.value.isLoading) return
+        _uiState.value = _uiState.value.copy(previewText = null)
+        previewJob = viewModelScope.launch {
+            // A cancelled CPU parser may still run until its dispatcher returns. Await its lock
+            // before copying another large buffer, so rapid tab/theme switches cannot pile up
+            // full snapshots or concurrently use one non-thread-safe renderer.
+            previewMutex.withLock {
+                coroutineContext.ensureActive()
+                val revision = documentSession.revision
+                val content = documentSession.snapshot()
+                val previewFormat = format
+                val isDark = when (_uiState.value.userPreferences.appThemeMode) {
+                    AppThemeModePreference.Dark -> true
+                    AppThemeModePreference.Light -> false
+                    AppThemeModePreference.System -> systemDarkTheme
+                }
+                val rendered: ReaderContent? = try {
+                    previewFormat?.loadEditorPreview(content, RenderTheme(isDark))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+                coroutineContext.ensureActive()
+                if (isPreviewShowing() && format === previewFormat &&
+                    revisions.acceptsPreview(generation, revision, documentSession.revision)
+                ) {
+                    // Read current state AFTER suspension: never restore old dirty/save/theme state.
+                    _uiState.value = _uiState.value.copy(previewText = rendered)
+                }
+            }
         }
-        // The format owns the renderer and its per-theme cache, so the preview and the viewer
-        // now render through one Markwon configuration rather than two built separately.
-        _uiState.value = _uiState.value.copy(
-            // Not `load`: the viewer's Markdown path answers with source for the WebView, and
-            // this pane is still a Markwon TextView.
-            previewText = format?.loadEditorPreview(text, RenderTheme(isDark))
-        )
     }
 
     /** As [withFormat], for the format a document named [fileName] resolves to. */

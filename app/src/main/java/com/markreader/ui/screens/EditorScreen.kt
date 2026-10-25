@@ -29,8 +29,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
@@ -74,26 +72,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.markreader.R
-import com.markreader.data.CodeFontPreference
-import com.markreader.data.ReadingFontPreference
 import com.markreader.ui.resolve
+import com.markreader.ui.editor.NativeDocumentEditor
 import com.markreader.ui.reader.RenderedTextView
-import com.markreader.ui.theme.CodeFontFamily
-import com.markreader.ui.theme.ReadingFontFamily
-import com.markreader.ui.theme.SansReadingFontFamily
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -247,63 +237,20 @@ fun EditorScreen(
 
                     // Editor or Preview content
                     val prefs = uiState.userPreferences
-                    val editorFontFamily = if (uiState.capabilities.isMonospaced) {
-                        when (prefs.codeFont) {
-                            CodeFontPreference.JetBrainsMono -> CodeFontFamily
-                            CodeFontPreference.SystemMono -> FontFamily.Monospace
-                        }
-                    } else {
-                        when (prefs.readingFont) {
-                            ReadingFontPreference.Merriweather -> ReadingFontFamily
-                            ReadingFontPreference.SystemSerif -> FontFamily.Serif
-                            ReadingFontPreference.MerriweatherSans -> SansReadingFontFamily
-                        }
-                    }
-
                     val showEdit = !uiState.capabilities.hasEditorPreview ||
                         uiState.activeTab == EditorTab.Edit
 
                     if (showEdit) {
-                        val scrollState = rememberScrollState()
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                        ) {
-                            val onSurface = MaterialTheme.colorScheme.onSurface
-                            val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
-                            val primary = MaterialTheme.colorScheme.primary
-                            BasicTextField(
-                                value = uiState.textFieldValue,
-                                onValueChange = viewModel::onTextChanged,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .verticalScroll(scrollState)
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                                textStyle = TextStyle(
-                                    fontFamily = editorFontFamily,
-                                    fontSize = prefs.fontSizeSp.sp,
-                                    lineHeight = (prefs.fontSizeSp * prefs.lineHeight).sp,
-                                    color = onSurface
-                                ),
-                                cursorBrush = SolidColor(primary),
-                                decorationBox = { innerTextField ->
-                                    Box {
-                                        if (uiState.textFieldValue.text.isEmpty()) {
-                                            Text(
-                                                text = stringResource(uiState.placeholderRes),
-                                                style = TextStyle(
-                                                    fontFamily = editorFontFamily,
-                                                    fontSize = prefs.fontSizeSp.sp,
-                                                    color = onSurfaceVariant
-                                                )
-                                            )
-                                        }
-                                        innerTextField()
-                                    }
-                                }
-                            )
-                        }
+                        NativeDocumentEditor(
+                            session = viewModel.documentSession,
+                            fontSizeSp = prefs.fontSizeSp,
+                            lineHeight = prefs.lineHeight,
+                            readingFont = prefs.readingFont,
+                            codeFont = prefs.codeFont,
+                            isMonospaced = uiState.capabilities.isMonospaced,
+                            placeholder = stringResource(uiState.placeholderRes),
+                            modifier = Modifier.weight(1f).fillMaxWidth()
+                        )
                     } else {
                         // Preview tab
                         val previewText = uiState.previewText

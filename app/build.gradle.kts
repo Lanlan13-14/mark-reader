@@ -77,6 +77,7 @@ android {
     }
 
     testOptions {
+        animationsDisabled = true
         unitTests {
             // The JVM tests below cover logic that only touches Android types at
             // its edges; stubs returning defaults keep them from throwing there.
@@ -174,4 +175,8 @@ dependencies {
     detektPlugins(libs.detekt.compose.rules)
 
     testImplementation(libs.junit)
+
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:core-ktx:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit-ktx:1.2.1")
 }
