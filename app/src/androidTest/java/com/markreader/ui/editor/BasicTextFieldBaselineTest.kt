@@ -37,23 +37,35 @@ class BasicTextFieldBaselineTest(private val size: Int, private val paragraph: B
                         else -> expected.length
                     })
                 }
-                lateinit var input: InputConnection
-                scenario.onActivity { activity ->
-                    input = requireNotNull(connection(activity.window.decorView))
-                }
                 repeat(6) { index ->
                     var at = 0
                     var syncNs = 0L
+                    var callbacks = 0
                     val frameNs = measureThroughFrame(scenario) { activity ->
                         at = activity.baseline.selection.start
-                        val started = SystemClock.elapsedRealtimeNanos()
-                        assertTrue(input.commitText("x", 1))
-                        syncNs = SystemClock.elapsedRealtimeNanos() - started
+                        callbacks = activity.baselineCallbacks
+                        // A synthetic connection is not the IMM-owned connection. Compose/IMM can
+                        // replace the input session between frames; never reuse this handle after
+                        // yielding to the main loop. Create and use it in the same UI-thread turn.
+                        val input = requireNotNull(connection(activity.window.decorView)) {
+                            "Compose input connection unavailable; baseline is NOT measured"
+                        }
+                        try {
+                            val started = SystemClock.elapsedRealtimeNanos()
+                            assertTrue(input.commitText("x", 1))
+                            syncNs = SystemClock.elapsedRealtimeNanos() - started
+                        } finally {
+                            // Release only our synthetic handle, not the platform IME's connection.
+                            input.closeConnection()
+                        }
                     }
                     expected = expected.substring(0, at) + "x" + expected.substring(at)
                     scenario.onActivity { activity ->
                         assertEquals(expected, activity.baseline.text)
                         assertEquals(at + 1, activity.baseline.selection.start)
+                        assertEquals(at + 1, activity.baseline.selection.end)
+                        assertTrue("commitText accepted without onValueChange",
+                            activity.baselineCallbacks > callbacks)
                         record("BasicTextField", size, paragraph, position, "commit-$index", syncNs,
                             0, -1, activity.window.decorView.height)
                         record("BasicTextField", size, paragraph, position, "frame-commit-$index", frameNs,

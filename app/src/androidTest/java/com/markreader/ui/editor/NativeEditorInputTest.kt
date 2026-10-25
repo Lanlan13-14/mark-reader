@@ -46,6 +46,11 @@ class NativeEditorInputTest(private val size: Int, private val singleParagraph: 
                 val view = activity.native
                 assertTrue("editor measured within viewport", view.height in 1..activity.window.decorView.height)
                 assertTrue("editor measured width", view.width > 0)
+                assertEquals(android.text.Layout.BREAK_STRATEGY_SIMPLE, view.breakStrategy)
+                assertEquals(android.text.Layout.HYPHENATION_FREQUENCY_NONE, view.hyphenationFrequency)
+                if (singleParagraph) {
+                    assertTrue("single paragraph remains soft-wrapped", checkNotNull(view.layout).lineCount > 1)
+                }
                 assertEquals(initial, view.text.toString())
             }
             for (position in listOf("begin", "middle", "end")) {

@@ -5,6 +5,7 @@ import android.graphics.Typeface
 import android.os.Build
 import android.text.Editable
 import android.text.InputType
+import android.text.Layout
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
@@ -49,6 +50,12 @@ class NativeDocumentEditText(context: Context) : AppCompatEditText(context) {
         imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_ACTION_NONE
         setSingleLine(false)
         setHorizontallyScrolling(false)
+        // Pin editing-friendly line breaking even if an inherited theme opts into high-quality
+        // paragraph breaking/hyphenation. These are normally EditText's platform defaults, so
+        // this is defensive configuration, NOT a bounded-layout fix: DynamicLayout still
+        // reshapes/reflows the entire newline-delimited paragraph after each text change.
+        breakStrategy = Layout.BREAK_STRATEGY_SIMPLE
+        hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
         isVerticalScrollBarEnabled = true
         scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
         overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
