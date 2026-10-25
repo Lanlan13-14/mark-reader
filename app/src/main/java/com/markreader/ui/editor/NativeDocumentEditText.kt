@@ -54,7 +54,11 @@ class NativeDocumentEditText(context: Context) : AppCompatEditText(context) {
         // paragraph breaking/hyphenation. These are normally EditText's platform defaults, so
         // this is defensive configuration, NOT a bounded-layout fix: DynamicLayout still
         // reshapes/reflows the entire newline-delimited paragraph after each text change.
-        breakStrategy = Layout.BREAK_STRATEGY_SIMPLE
+        breakStrategy = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            android.graphics.text.LineBreaker.BREAK_STRATEGY_SIMPLE
+        } else {
+            Layout.BREAK_STRATEGY_SIMPLE
+        }
         hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
         isVerticalScrollBarEnabled = true
         scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
