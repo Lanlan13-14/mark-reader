@@ -36,11 +36,13 @@ class BasicTextFieldBaselineTest(private val size: Int, private val paragraph: B
                     })
                 }
                 InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                lateinit var activeInput: InputConnection
+                scenario.onActivity { activity ->
+                    activeInput = requireNotNull(connection(activity.window.decorView))
+                }
                 repeat(12) { index ->
                     scenario.onActivity { activity ->
-                        val input = requireNotNull(connection(activity.window.decorView)) {
-                            "Compose input connection unavailable; baseline is NOT measured"
-                        }
+                        val input = activeInput
                         val at = activity.baseline.selection.start
                         val callbacks = activity.baselineCallbacks
                         val started = SystemClock.elapsedRealtimeNanos()
@@ -52,7 +54,6 @@ class BasicTextFieldBaselineTest(private val size: Int, private val paragraph: B
                         assertTrue(activity.baselineCallbacks > callbacks)
                         record("BasicTextField", size, paragraph, position, "commit-$index", elapsed,
                             0, activity.baselineCallbacks - callbacks, activity.window.decorView.height)
-                        input.closeConnection()
                     }
                     InstrumentationRegistry.getInstrumentation().waitForIdleSync()
                 }
@@ -60,7 +61,7 @@ class BasicTextFieldBaselineTest(private val size: Int, private val paragraph: B
                     var at = 0
                     val elapsed = measureThroughFrame(scenario) { activity ->
                         at = activity.baseline.selection.start
-                        assertTrue(requireNotNull(connection(activity.window.decorView)).commitText("f", 1))
+                        assertTrue(activeInput.commitText("f", 1))
                     }
                     expected = expected.substring(0, at) + "f" + expected.substring(at)
                     scenario.onActivity { activity ->
