@@ -7,7 +7,7 @@ import statistics
 import sys
 root = pathlib.Path(sys.argv[1])
 groups = collections.defaultdict(list)
-for name in ('native-metrics.jsonl', 'baseline-metrics.jsonl'):
+for name in ('native-metrics.jsonl', 'baseline-metrics.jsonl', 'logcat-metrics.jsonl'):
     path = root / name
     if not path.exists():
         continue

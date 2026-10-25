@@ -6,6 +6,7 @@ collect() {
   adb shell dumpsys meminfo com.markreader > editor-evidence/device-meminfo.txt 2>&1 || true
   adb shell getprop > editor-evidence/device-properties.txt 2>&1 || true
   adb exec-out run-as com.markreader cat files/editor-metrics.jsonl > editor-evidence/last-metrics.jsonl 2>/dev/null || true
+  python3 scripts/editor-recover-metrics.py editor-evidence || true
   python3 scripts/editor-metrics.py editor-evidence || true
 }
 trap collect EXIT

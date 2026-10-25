@@ -96,9 +96,10 @@ class EditorDocumentSession {
         val start = minOf(anchor, focus)
         val end = maxOf(anchor, focus)
         edit {
-            // Two local inserts, not a document-sized concatenation (nor a selected-text snapshot).
-            buffer.insert(end, suffix)
-            buffer.insert(start, prefix)
+            // One replacement is one platform undo operation. Copy only the selected range,
+            // never the rest of the document (beginBatchEdit does not group two distant inserts).
+            val selected = buffer.subSequence(start, end).toString()
+            buffer.replace(start, end, prefix + selected + suffix)
             Selection.setSelection(buffer, anchor + prefix.length, focus + prefix.length)
         }
     }
