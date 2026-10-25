@@ -24,7 +24,7 @@ cp -R app/build/reports/androidTests editor-evidence/native-report 2>/dev/null |
 baseline_status=0
 if [ "$native_status" -eq 0 ] && [ "${RUN_BASELINE:-false}" = true ]; then
   adb shell run-as com.markreader rm -f files/editor-metrics.jsonl
-  ./gradlew :app:connectedDebugAndroidTest --rerun-tasks --stacktrace --max-workers=2 \
+  ./gradlew :app:connectedDebugAndroidTest --stacktrace --max-workers=2 \
     '-Dorg.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8' \
     -Pandroid.testInstrumentationRunnerArguments.class=com.markreader.ui.editor.BasicTextFieldBaselineTest
   baseline_status=$?

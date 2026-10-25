@@ -11,7 +11,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
-import android.widget.EditText
+import androidx.appcompat.widget.AppCompatEditText
 import android.widget.TextView.BufferType
 import androidx.annotation.ColorInt
 
@@ -20,7 +20,7 @@ import androidx.annotation.ColorInt
  * unbounded height. Uses platform IME, selection/action-mode, accessibility and undo semantics.
  * Android's DynamicLayout still has document/paragraph-dependent costs; this is not virtualization.
  */
-class NativeDocumentEditText(context: Context) : EditText(context) {
+class NativeDocumentEditText(context: Context) : AppCompatEditText(context) {
     private var session: EditorDocumentSession? = null
     private var replacing = false
     private var appliedStyle: NativeEditorStyle? = null
