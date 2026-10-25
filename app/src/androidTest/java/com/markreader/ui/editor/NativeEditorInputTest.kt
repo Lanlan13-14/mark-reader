@@ -113,8 +113,8 @@ class NativeEditorInputTest(private val size: Int, private val singleParagraph: 
                 operation(activity, "middle", "compose-ni") { assertTrue(connection.setComposingText("ni", 1)) }
                 expected = expected.replaceRange(at, at + 7, "ni")
                 assertEquals(expected, view.text.toString())
-                assertEquals(at, BaseInputConnection.getComposingSpanStart(view.text))
-                assertEquals(at + 2, BaseInputConnection.getComposingSpanEnd(view.text))
+                assertEquals(at, BaseInputConnection.getComposingSpanStart(checkNotNull(view.text)))
+                assertEquals(at + 2, BaseInputConnection.getComposingSpanEnd(checkNotNull(view.text)))
                 operation(activity, "middle", "compose-nihao") { assertTrue(connection.setComposingText("nihao", 1)) }
                 expected = expected.replaceRange(at, at + 2, "nihao")
                 assertEquals(expected, view.text.toString())
@@ -123,7 +123,7 @@ class NativeEditorInputTest(private val size: Int, private val singleParagraph: 
                 assertEquals(expected, view.text.toString())
                 assertEquals(at + 4, view.selectionStart)
                 assertTrue(connection.finishComposingText())
-                assertEquals(-1, BaseInputConnection.getComposingSpanStart(view.text))
+                assertEquals(-1, BaseInputConnection.getComposingSpanStart(checkNotNull(view.text)))
                 val emojiAt = view.selectionStart
                 operation(activity, "middle", "emoji-insert") { assertTrue(connection.commitText("😀", 1)) }
                 expected = expected.substring(0, emojiAt) + "😀" + expected.substring(emojiAt)
