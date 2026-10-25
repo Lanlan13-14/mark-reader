@@ -70,7 +70,7 @@ class NativeDocumentEditText(context: Context) : AppCompatEditText(context) {
         session = document
         replaceNativeBuffer(document)
         document.attach(
-            text,
+            checkNotNull(text),
             onReplace = { replaceNativeBuffer(document) },
             onBeginEdit = { beginToolbarEdit() },
             onEndEdit = { endToolbarEdit() }
@@ -84,7 +84,7 @@ class NativeDocumentEditText(context: Context) : AppCompatEditText(context) {
         session?.let { document ->
             document.scrollX = scrollX
             document.scrollY = scrollY
-            document.detach(text)
+            document.detach(checkNotNull(text))
         }
         session = null
     }
@@ -113,7 +113,7 @@ class NativeDocumentEditText(context: Context) : AppCompatEditText(context) {
         try {
             setText(document.textForBinding, BufferType.EDITABLE)
             setSelection(start.coerceAtMost(length()), end.coerceAtMost(length()))
-            document.adoptEditable(text)
+            document.adoptEditable(checkNotNull(text))
         } finally {
             replacing = false
         }
