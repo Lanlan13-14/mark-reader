@@ -1,18 +1,26 @@
 package com.markreader.ui.editor
 
-import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputConnection
+import androidx.compose.ui.node.RootForTest
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.text.AnnotatedString
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.Parameterized
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
-/** Historical UI-shape baseline; results are verified after Compose has rendered a frame. */
+/**
+ * Historical UI shape, driven by Compose InsertTextAtCursor semantics with system IME blocked.
+ * NOT an InputConnection/IME benchmark. Only action-through-two-vsync observations are recorded;
+ * neither these nor native synchronous commitText times are interchangeable or input-to-photon.
+ */
 @RunWith(Parameterized::class)
 class BasicTextFieldBaselineTest(private val size: Int, private val paragraph: Boolean) {
     companion object {
@@ -22,65 +30,93 @@ class BasicTextFieldBaselineTest(private val size: Int, private val paragraph: B
     }
 
     @Test
-    fun oldComposeShapeInputConnectionTimings() {
+    fun oldComposeShapeSemanticsFrameTimings() {
         ActivityScenario.launch(EditorInstrumentationActivity::class.java).use { scenario ->
             var expected = document(size, paragraph)
-            scenario.onActivity { it.installBaseline(expected) }
+            val inputIntercepted = CountDownLatch(1)
+            scenario.onActivity { it.installBaseline(expected, inputIntercepted) }
+            // A lifecycle barrier, not an edit retry: focus must reach the interceptor before
+            // sampling. The interceptor suspends without forwarding to the Android keyboard.
+            assertTrue("Compose input session did not reach IME isolation within 60s",
+                inputIntercepted.await(60, TimeUnit.SECONDS))
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-            // waitForIdleSync alone does not await a scheduled Compose recomposition.
             measureThroughFrame(scenario) { }
+            var expectedSelection = 0
+            scenario.onActivity { assertBaseline(it, expected, expectedSelection) }
             for (position in listOf("begin", "middle", "end")) {
-                measureThroughFrame(scenario) { activity ->
-                    activity.selectBaseline(when (position) {
-                        "begin" -> 0
-                        "middle" -> expected.length / 2
-                        else -> expected.length
-                    })
+                expectedSelection = when (position) {
+                    "begin" -> 0
+                    "middle" -> expected.length / 2
+                    else -> expected.length
                 }
+                // Selection is setup, outside the edit measurement. Verify both the state
+                // holder and rendered semantics so a stale semantics closure cannot be used.
+                measureThroughFrame(scenario) { it.selectBaseline(expectedSelection) }
+                scenario.onActivity { assertBaseline(it, expected, expectedSelection) }
                 repeat(6) { index ->
-                    var at = 0
-                    var syncNs = 0L
+                    val at = expectedSelection
                     var callbacks = 0
-                    val frameNs = measureThroughFrame(scenario) { activity ->
-                        at = activity.baseline.selection.start
+                    var insert: ((AnnotatedString) -> Boolean)? = null
+                    scenario.onActivity { activity ->
+                        assertBaseline(activity, expected, at)
                         callbacks = activity.baselineCallbacks
-                        // A synthetic connection is not the IMM-owned connection. Compose/IMM can
-                        // replace the input session between frames; never reuse this handle after
-                        // yielding to the main loop. Create and use it in the same UI-thread turn.
-                        val input = requireNotNull(connection(activity.window.decorView)) {
-                            "Compose input connection unavailable; baseline is NOT measured"
-                        }
-                        try {
-                            val started = SystemClock.elapsedRealtimeNanos()
-                            assertTrue(input.commitText("x", 1))
-                            syncNs = SystemClock.elapsedRealtimeNanos() - started
-                        } finally {
-                            // Release only our synthetic handle, not the platform IME's connection.
-                            input.closeConnection()
+                        insert = requireNotNull(editorNode(activity).config[
+                            SemanticsActions.InsertTextAtCursor].action) {
+                            "Compose insertion semantics unavailable; baseline is NOT measured"
                         }
                     }
+                    val frameNs = measureThroughFrame(scenario) {
+                        assertTrue("Compose insertion semantics rejected edit",
+                            requireNotNull(insert).invoke(AnnotatedString("x")))
+                    }
+                    // Oracle construction, full comparisons and serialization are not timed.
                     expected = expected.substring(0, at) + "x" + expected.substring(at)
+                    expectedSelection = at + 1
                     scenario.onActivity { activity ->
-                        assertEquals(expected, activity.baseline.text)
-                        assertEquals(at + 1, activity.baseline.selection.start)
-                        assertEquals(at + 1, activity.baseline.selection.end)
-                        assertTrue("commitText accepted without onValueChange",
-                            activity.baselineCallbacks > callbacks)
-                        record("BasicTextField", size, paragraph, position, "commit-$index", syncNs,
-                            0, -1, activity.window.decorView.height)
-                        record("BasicTextField", size, paragraph, position, "frame-commit-$index", frameNs,
-                            0, -1, activity.window.decorView.height)
+                        assertBaseline(activity, expected, expectedSelection)
+                        assertEquals("one insertion must emit exactly one onValueChange",
+                            callbacks + 1, activity.baselineCallbacks)
+                        // Deliberately different engine AND operation names: do not mix with
+                        // native commit-* or frame-commit-* distributions/speedup ratios.
+                        record("BasicTextField-semantics", size, paragraph, position,
+                            "frame-semantics-insert-$index", frameNs, 0,
+                            activity.baselineCallbacks - callbacks, activity.window.decorView.height)
                     }
                 }
             }
+            // A separate, unmeasured stability boundary catches deferred state rollback.
+            measureThroughFrame(scenario) { }
+            scenario.onActivity { assertBaseline(it, expected, expectedSelection) }
         }
     }
 
-    private fun connection(view: View): InputConnection? {
-        if (view.onCheckIsTextEditor()) view.onCreateInputConnection(EditorInfo())?.let { return it }
-        if (view is ViewGroup) for (index in 0 until view.childCount) {
-            connection(view.getChildAt(index))?.let { return it }
+    private fun assertBaseline(activity: EditorInstrumentationActivity, expected: String, selection: Int) {
+        assertEquals("complete backing text", expected, activity.baseline.text)
+        assertEquals("backing selection start", selection, activity.baseline.selection.start)
+        assertEquals("backing selection end", selection, activity.baseline.selection.end)
+        val config = editorNode(activity).config
+        assertEquals("complete rendered semantics text", expected,
+            config[SemanticsProperties.EditableText].text)
+        val renderedSelection = config[SemanticsProperties.TextSelectionRange]
+        assertEquals("rendered selection start", selection, renderedSelection.start)
+        assertEquals("rendered selection end", selection, renderedSelection.end)
+        assertTrue("baseline must retain focus", config[SemanticsProperties.Focused])
+    }
+
+    private fun editorNode(activity: EditorInstrumentationActivity): SemanticsNode {
+        val editors = mutableListOf<SemanticsNode>()
+        fun visitNode(node: SemanticsNode) {
+            if (node.config.contains(SemanticsActions.InsertTextAtCursor)) editors.add(node)
+            node.children.forEach { visitNode(it) }
         }
-        return null
+        fun visitView(view: View) {
+            if (view is RootForTest) visitNode(view.semanticsOwner.unmergedRootSemanticsNode)
+            if (view is ViewGroup) for (index in 0 until view.childCount) {
+                visitView(view.getChildAt(index))
+            }
+        }
+        visitView(activity.window.decorView)
+        check(editors.size == 1) { "Expected one Compose editor, found ${editors.size}" }
+        return editors.single()
     }
 }

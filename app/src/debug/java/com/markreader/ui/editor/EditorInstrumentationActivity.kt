@@ -14,6 +14,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.platform.InterceptPlatformTextInput
+import androidx.compose.ui.platform.PlatformTextInputInterceptor
+import kotlinx.coroutines.awaitCancellation
+import java.util.concurrent.CountDownLatch
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Modifier
@@ -64,18 +69,30 @@ class EditorInstrumentationActivity : ComponentActivity() {
         native.requestFocus()
     }
 
-    fun installBaseline(document: String) {
+    @OptIn(ExperimentalComposeUiApi::class)
+    fun installBaseline(document: String, inputIntercepted: CountDownLatch) {
         baseline = TextFieldValue(document)
         baselineCallbacks = 0
         setContent {
             val focus = remember { FocusRequester() }
-            LaunchedEffect(Unit) { focus.requestFocus() }
-            BasicTextField(
-                value = baseline,
-                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 16.sp, lineHeight = 22.4.sp),
-                onValueChange = { baselineCallbacks++; baseline = it },
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).focusRequester(focus)
-            )
+            // This baseline uses Compose semantics, NOT Android IME transport. Keep the
+            // focused editor's input session alive but never connect a system keyboard.
+            // Otherwise queued IME commands can race the test's selection/edit oracle.
+            val interceptor = remember {
+                PlatformTextInputInterceptor { _, _ ->
+                    inputIntercepted.countDown()
+                    awaitCancellation()
+                }
+            }
+            InterceptPlatformTextInput(interceptor) {
+                LaunchedEffect(Unit) { focus.requestFocus() }
+                BasicTextField(
+                    value = baseline,
+                    textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 16.sp, lineHeight = 22.4.sp),
+                    onValueChange = { baselineCallbacks++; baseline = it },
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).focusRequester(focus)
+                )
+            }
         }
     }
 
